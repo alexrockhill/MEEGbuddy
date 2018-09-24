@@ -1,4 +1,3 @@
-.gitignore
 MEEGbuddy/scratch.py
 MEEGbuddyDemo/data/*
 .ipynb_checkpoints
