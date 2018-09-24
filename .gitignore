@@ -1,2 +1,7 @@
+.gitignore
 MEEGbuddy/scratch.py
 MEEGbuddyDemo/data/*
+.ipynb_checkpoints
+MEEGbuddy.egg-info
+build/lib/MEEGbuddy
+dist
