@@ -8,6 +8,10 @@ MEEGbuddy uses MNE, autoreject and PCI (noreun on github) for preprocessing most
 1. clone into a repository
 2. run python setup.py install
 
+To run the demo:
+1. install jupyter if you haven't already: pip install jupyter
+2. run "jupyter-notebook" from a terminal
+
 This was originally designed in python2 but now is only supported in python3, it will probably work in python2 for a while longer but no promises
 
 ## Citation 
