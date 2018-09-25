@@ -1,3 +1,4 @@
+import mne
 from mne.io import Raw, RawArray,set_eeg_reference,BaseRaw
 from mne.preprocessing import (ICA, read_ica, create_eog_epochs,
                                create_ecg_epochs, fix_stim_artifact,
@@ -257,7 +258,7 @@ class MEEGbuddy:
             return ica
         else:
             print('No ICA data file found %s'
-                    (keyword if keyword is not None else ''))
+                    %(keyword if keyword is not None else ''))
 
     def _default_aux(self,inst,eogs,ecgs):
         if eogs is None:
@@ -873,15 +874,22 @@ class MEEGbuddy:
         # note: if linear trend, apply l_freq filter
         keyword_out = keyword_in if keyword_out is None else keyword_out
         epochs = self._load_epochs(event,ar=ar,keyword=keyword_in)
+        if l_freq is not None or h_freq is not None:
+            epochs_copy = epochs.copy().filter(l_freq=l_freq,h_freq=h_freq)
         if len(epochs.event_id) != len(epochs):
             event_id = epochs.event_id
             epochs.event_id = {str(i):i for i in range(len(epochs))}
-            epochs.plot(n_epochs=n_epochs,n_channels=n_channels,block=True,
-                    scalings=scalings)
+            epochs_copy.plot(n_epochs=n_epochs,n_channels=n_channels,block=True,
+                             scalings=scalings)
             epochs.event_id = event_id
         else:
-            epochs.plot(n_epochs=n_epochs,n_channels=n_channels,block=True,
-                        scalings=scalings)
+            epochs_copy.plot(n_epochs=n_epochs,n_channels=n_channels,block=True,
+                             scalings=scalings)
+        epochs.info['bads'] = epochs_copy.info['bads']
+        epochs.events = epochs_copy.events
+        epochs.selection = epochs_copy.selection
+        epochs.drop_log = epochs_copy.drop_log
+        epochs._data = epochs._data[epochs.selection]
         self._save_epochs(epochs,event,ar=ar,keyword=keyword_out)
 
     def plotTopo(self,event,condition=None,values=None,
@@ -1282,7 +1290,7 @@ class MEEGbuddy:
         if values is None:
             values = np.unique([cd for cd in self.behavior[condition] if
                                 (type(cd) is str or type(cd) is np.string_ or
-                                 not np.isnan(cd))])
+                                 type(cd) is np.str_ or not np.isnan(cd))])
             if (len(values) > 5 and
                 all([istype(val,int) or istype(val,float) for val in values])):
                values,edges = np.histogram(values,bins=5)
@@ -2342,13 +2350,13 @@ class MEEGbuddy:
                         ar=False,keyword_in=None,keyword_out=None,method='dSPM',
                         pick_ori='normal',tfr=True,fmin=7,fmax=35,nmin=3,nmax=10,
                         steps=7,Nboot=1000,Nave=50,seed=13,n_jobs=10,nlabels=100,
-                        surf_name='pial',batch=10,overwrite=False):
+                        use_fft=True,mode='same',batch=10,overwrite=False):
         freqs = np.logspace(np.log10(fmin),np.log10(fmax),steps)
         n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
         keyword_out = keyword_in if keyword_out is None else keyword_out
         fname = self._fname('sources','bootstrap','.npz',ar and not keyword_out,
                             keyword_out,snr,method,pick_ori,tfr,Nboot,Nave,seed,
-                            fmin,fmax,nmin,nmax,steps,surf_name)
+                            fmin,fmax,nmin,nmax,steps,use_fft,mode)
         if os.path.isfile(fname) and not overwrite:
             raise ValueError('Bootstraps already exist, use overwrite=True')
         np.random.seed(seed)
@@ -2382,10 +2390,10 @@ class MEEGbuddy:
             fname2 = self._fname('sources','bootstrap','.npz','%i-%i' %(i_min,i_max),
                                  ar and not keyword_out,keyword_out,snr,method,
                                  pick_ori,tfr,Nboot,Nave,seed,fmin,fmax,nmin,
-                                 nmax,steps,surf_name)
+                                 nmax,steps,use_fft,mode)
             if os.path.isfile(fname2):
                 continue
-            for i,k in enumerate(range(i_min,i_max)):
+            for i,k in enumerate(tqdm(range(i_min,i_max))):
                 indices = bootstrap_indices[k]
                 bl_indices = [np.where(bl_events == j)[0][0]
                               for j in events[indices]]
@@ -2396,24 +2404,17 @@ class MEEGbuddy:
                                            pick_ori=pick_ori)
                 stcs[i] = stc.data[:]
             if tfr:
-                stc_new = stc.copy()
-                stc_new.data.fill(0)
-                power_stcs = [stc_new.copy() for _ in range(steps)]
-                itc_stcs = [stc_new.copy() for _ in range(steps)]
-                for j,label in enumerate(tqdm(labels)):
-                    power, itc = \
-                            source_induced_power(epochs[indices],inv,
-                                                 freqs=freqs,n_cycles=n_cycles,
-                                                 label=label,lambda2=lambda2,
-                                                 method=method,nave=Nave,
-                                                 pick_ori=pick_ori,n_jobs=n_jobs,
-                                                 prepared=False)
-                    for f_ind in range(steps):
-                        power_stcs[f_ind].data[j] = power[:,f_ind]
-                        itc_stcs[f_ind].data[j] = itc[:,f_ind]
+                Ws = mne.time_frequency.morlet(epochs.info['sfreq'],
+                                               freqs, n_cycles=n_cycles,
+                                               zero_mean=False)
+                this_tfr = mne.time_frequency.tfr.cwt(stc.data.copy(),Ws,
+                                                  use_fft=use_fft,
+                                                  mode=mode)
+                power = (this_tfr * this_tfr.conj()).real
+                itc = np.angle(this_tfr)
                 for f_ind in range(steps):
-                    tfrs[i,0,f_ind] = power_stcs[f_ind].data
-                    tfrs[i,1,f_ind] = itc_stcs[f_ind].data
+                    tfrs[i,0,f_ind] = power[:,f_ind]
+                    tfrs[i,1,f_ind] = itc[:,f_ind]
             np.savez_compressed(fname2,stcs=stcs,tfrs=tfrs,
                                 freqs=freqs,n_cycles=n_cycles)
         #
@@ -2430,7 +2431,7 @@ class MEEGbuddy:
             fname2 = self._fname('sources','bootstrap','.npz','%i-%i' %(i_min,i_max),
                                  ar and not keyword_out,keyword_out,snr,method,
                                  pick_ori,tfr,Nboot,Nave,seed,fmin,fmax,nmin,
-                                 nmax,steps,surf_name)
+                                 nmax,steps,use_fft,mode)
             if os.path.isfile(fname2):
                 stcs2,tfrs2 = np.load(fname2)['stcs'], np.load(fname2)['tfrs']
                 if stcs2:
