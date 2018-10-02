@@ -86,6 +86,7 @@ class MEEGbuddy:
             malfunctioning equiptment, experimenter error ect.
         '''
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        mne.set_log_level('error')
         set_log_level("ERROR")
         self.subjects_dir = subjects_dir
         if isinstance(fdata,list):
@@ -1122,7 +1123,7 @@ class MEEGbuddy:
                     [axs2[0]] if self.eeg else [axs2[0], axs2[1]])
             evoked.plot(axes=axs3,show=False,ylim=ylim,picks=picks)
             axs2[0].set_title('%s %s %s %s' %(self.subject,event,condition,value) +
-                         (', %i trials used'%(nTR))*downsample*(condition is not None))
+                         (', %i trials used'%(len(indices))))
             if image:
                 axs3 = ([axs2[3], axs2[4], axs2[5]] if self.meg and self.eeg else
                     [axs2[1]] if self.eeg else [axs2[2], axs2[3]])
@@ -2027,9 +2028,10 @@ class MEEGbuddy:
         epochs = self._load_epochs(event,ar=ar,keyword=keyword_in)
         bl_epochs = self._load_epochs('Baseline',ar=ar,keyword=keyword_in)
         value_indices = self._get_indices(epochs,condition,values)
+
         if (all([os.path.isfile(self._fname('sources','source-lh','.stc',event,
                                             condition,value))
-                 for value in value_indices]) and not overwrite):
+                 for value in values]) and not overwrite):
             print('Sources already computed, use \'overwrite=True\' ' +
                   'to recalculate')
             return
@@ -2061,6 +2063,7 @@ class MEEGbuddy:
                 self._save_inverse(inv,lambda2,method,pick_ori,
                                    event,condition,value,ar,keyword_out)
                 print('Applying inverse on baseline for %s...' %(value))
+                bl_evoked = bl_epochs[bl_indices].average()
                 bl_stc = apply_inverse(bl_evoked,inv,lambda2=lambda2,
                                        method=method,pick_ori=pick_ori)
                 self._save_source(bl_stc,'Baseline',condition,value,ar,
@@ -2090,7 +2093,9 @@ class MEEGbuddy:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=True)
 
-        bl_epochs.info['bads'] = epochs.info['bads']
+        bads = list(np.unique(epochs.info['bads'] + bl_epochs.info['bads']))
+        epochs.info['bads'] = bads
+        bl_epochs.info['bads'] = bads
 
         _,bl_tmin,bl_tmax = self.events['Baseline']
         bl_epochs = bl_epochs.crop(tmin=bl_tmin,tmax=bl_tmax)
@@ -2131,7 +2136,8 @@ class MEEGbuddy:
                         fs_av=False,ar=False,keyword=None,downsample=False,
                         seed=11,hemi='both',size=(800,800),time_dilation=10,
                         clim='default',use_saved_stc=False, gif_combine=True,
-                        views=['lat','med','cau','dor','ven','fro','par']):
+                        views=['lat','med','cau','dor','ven','fro','par'],
+                        show=True):
         ''' This may take some time... plots each individual view and then
             combines them all in one animated gif is gif_combine=True. It's okay
             to have other windows over the mlab plots but don't minimize them
@@ -2188,9 +2194,12 @@ class MEEGbuddy:
 
             if gif_combine:
                 print('Combining gifs for %s' %(value))
-                combine_gifs(self._fname('plots','source_plot','.gif',event,
-                             condition,value,'ar'*ar,keyword,hemi,*views),60,
-                             *gif_names)
+                anim = combine_gifs(self._fname('plots','source_plot','.gif',
+                                                event,condition,value,'ar'*ar,
+                                                keyword,hemi,*views),
+                                    60,*gif_names)
+                if show:
+                    anim.show()
 
     def interpolateArtifact(self,event,ar=False,keyword=None,
                             preprocessed=False,ica=False,mode='spline',
@@ -2349,14 +2358,15 @@ class MEEGbuddy:
     def sourceBootstrap(self,fs_dir,bemf,sourcef,coord_transf,event,snr=1.0,
                         ar=False,keyword_in=None,keyword_out=None,method='dSPM',
                         pick_ori='normal',tfr=True,fmin=7,fmax=35,nmin=3,nmax=10,
-                        steps=7,Nboot=1000,Nave=50,seed=13,n_jobs=10,nlabels=100,
+                        steps=7,Nboot=250,Nave=50,seed=13,n_jobs=10,nlabels=100,
                         use_fft=True,mode='same',batch=10,overwrite=False):
         freqs = np.logspace(np.log10(fmin),np.log10(fmax),steps)
         n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
         keyword_out = keyword_in if keyword_out is None else keyword_out
-        fname = self._fname('sources','bootstrap','.npz',ar and not keyword_out,
-                            keyword_out,snr,method,pick_ori,tfr,Nboot,Nave,seed,
-                            fmin,fmax,nmin,nmax,steps,use_fft,mode)
+        fname = self._fname('sources','bootstrap','.npz',event,
+                            ar and not keyword_out,keyword_out,snr,method,
+                            pick_ori,tfr,Nboot,Nave,seed,fmin,fmax,nmin,nmax,
+                            steps,use_fft,mode)
         if os.path.isfile(fname) and not overwrite:
             raise ValueError('Bootstraps already exist, use overwrite=True')
         np.random.seed(seed)
@@ -2365,7 +2375,8 @@ class MEEGbuddy:
         removal_indices = []
         for j,i in enumerate(epochs.events[:,2]):
             if not i in bl_epochs.events[:,2]:
-                removal_indices.append(i)
+                removal_indices.append(j)
+        epochs = epochs.drop(removal_indices)
         bootstrap_indices = np.random.randint(0,len(epochs),(Nboot,Nave))
 
         bem,source,coord_trans,lambda2,epochs,bl_epochs,fwd = \
@@ -2379,16 +2390,20 @@ class MEEGbuddy:
                  dtype='float64', mode='w+',
                  shape=(batch,fwd['nsource'],len(epochs.times)))
         if tfr:
+            Ws = mne.time_frequency.morlet(epochs.info['sfreq'],
+                                               freqs, n_cycles=n_cycles,
+                                               zero_mean=False)
             tfrs = np.memmap('sb_tfr_%s_%s_%s_workfile' %(event,ar,keyword_out),
                              dtype='float64', mode='w+',
                              shape=(batch,2,steps,fwd['nsource'],len(epochs.times)))
         else:
-            tfrs = None
+            tfrs = Ws = None
         mins = range(0,Nboot-batch +1,batch)
         maxs = range(batch,Nboot+1,batch)
         for i_min,i_max in zip(mins,maxs):
+            print('Computing bootstraps %i to %i' %(i_min,i_max))
             fname2 = self._fname('sources','bootstrap','.npz','%i-%i' %(i_min,i_max),
-                                 ar and not keyword_out,keyword_out,snr,method,
+                                 event,ar and not keyword_out,keyword_out,snr,method,
                                  pick_ori,tfr,Nboot,Nave,seed,fmin,fmax,nmin,
                                  nmax,steps,use_fft,mode)
             if os.path.isfile(fname2):
@@ -2403,18 +2418,15 @@ class MEEGbuddy:
                 stc = apply_inverse(evoked,inv,lambda2=lambda2,method=method,
                                            pick_ori=pick_ori)
                 stcs[i] = stc.data[:]
-            if tfr:
-                Ws = mne.time_frequency.morlet(epochs.info['sfreq'],
-                                               freqs, n_cycles=n_cycles,
-                                               zero_mean=False)
-                this_tfr = mne.time_frequency.tfr.cwt(stc.data.copy(),Ws,
-                                                  use_fft=use_fft,
-                                                  mode=mode)
-                power = (this_tfr * this_tfr.conj()).real
-                itc = np.angle(this_tfr)
-                for f_ind in range(steps):
-                    tfrs[i,0,f_ind] = power[:,f_ind]
-                    tfrs[i,1,f_ind] = itc[:,f_ind]
+                if tfr:
+                    this_tfr = mne.time_frequency.tfr.cwt(stc.data.copy(),Ws,
+                                                      use_fft=use_fft,
+                                                      mode=mode)
+                    power = (this_tfr * this_tfr.conj()).real
+                    itc = np.angle(this_tfr)
+                    for f_ind in range(steps):
+                        tfrs[i,0,f_ind] = power[:,f_ind]
+                        tfrs[i,1,f_ind] = itc[:,f_ind]
             np.savez_compressed(fname2,stcs=stcs,tfrs=tfrs,
                                 freqs=freqs,n_cycles=n_cycles)
         #
@@ -2429,14 +2441,14 @@ class MEEGbuddy:
                              shape=(Nboot,steps,fwd['nsource'],len(epochs.times)))
         for i_min,i_max in zip(mins,maxs):
             fname2 = self._fname('sources','bootstrap','.npz','%i-%i' %(i_min,i_max),
-                                 ar and not keyword_out,keyword_out,snr,method,
+                                 event,ar and not keyword_out,keyword_out,snr,method,
                                  pick_ori,tfr,Nboot,Nave,seed,fmin,fmax,nmin,
                                  nmax,steps,use_fft,mode)
             if os.path.isfile(fname2):
                 stcs2,tfrs2 = np.load(fname2)['stcs'], np.load(fname2)['tfrs']
-                if stcs2:
+                if stcs2.any():
                     stcs[i_min:i_max] = stcs2
-                if tfrs:
+                if tfrs2.any():
                     tfrs[i_min:i_max] = tfrs2
             else:
                 print('Bootstraps not found for %i to %i' %(i_min,i_max))
@@ -2447,7 +2459,7 @@ class MEEGbuddy:
 
     def sourceCorrelation():
         keyword_out = keyword_in if keyword_out is None else keyword_out
-        fname = self._fname('sources','bootstrap','.npz',ar and not keyword_out,
+        fname = self._fname('sources','bootstrap','.npz',event,ar and not keyword_out,
                             keyword_out,method,pick_ori,tfr,Nboot,Nave,seed,
                             fs_av,fmin,fmax,nmin,nmax,steps)
         if os.path.isfile(fname) and not overwrite:
@@ -2456,7 +2468,7 @@ class MEEGbuddy:
     def noreunPhi(self,event,condition,values=None,ar=False,keyword_in=None,
                   keyword_out=None,tmin=None,tmax=None,npoint_art=0,
                   Nboot=480,alpha=0.01,downsample=True,seed=11,
-                  shared_baseline=False,fs_av=False,bl_tmin=-1.0,bl_tmax=-0.1,
+                  shared_baseline=False,fs_av=False,bl_tmin=-0.5,bl_tmax=-0.1,
                   recalculate_baseline=False,recalculate_PCI=False):
         ''' note: has to have baseline-event continuity for source space
             transformation: cannot use baseline as would be defined for

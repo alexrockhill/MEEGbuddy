@@ -58,6 +58,7 @@ def combine_gifs(output_fname,fps,*gif_fnames):
     anim = animation.FuncAnimation(fig,animate,frames=frames,interval=10,blit=True)
     anim.save(output_fname,fps=fps,writer='imagemagick',
               savefig_kwargs={'facecolor':'black'})
+    return anim
 
 if __name__ == '__main__':
     import sys
