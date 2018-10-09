@@ -42,6 +42,7 @@ from . import pci
 from .gif_combine import combine_gifs
 import nitime.algorithms as tsa
 from scipy import interpolate
+from scipy.stats import linregress
 from scipy.signal import detrend
 from scipy.io import savemat
 from surfer import Brain
@@ -150,8 +151,9 @@ class MEEGbuddy:
             self.events['Response'] = response
 
         self.baseline = baseline
-        if len(self.baseline) != 3:
-            raise ValueError('baseline must contain a channel, start time and stop time.')
+        if not self.baseline or len(self.baseline) != 3:
+            print('Baseline must contain a channel, start time and stop time. ' +
+                  'Okay to continue, use normalized=False when making epochs')
         self.events['Baseline'] = baseline
 
         self.tbuffer = tbuffer
@@ -692,7 +694,7 @@ class MEEGbuddy:
     def autoMarkBads(self,preprocessed=False,keyword_in=None,keyword_out=None,
                      flat=dict(grad=1e-11, # T / m (gradiometers)
                                mag=5e-13, # T (magnetometers)
-                               eeg=2.5e-5, # V (EEG channels)
+                               eeg=2e-5, # V (EEG channels)
                                ),
                      reject=dict(grad=5e-10, # T / m (gradiometers)
                                  mag=1e-11, # T (magnetometers)
@@ -1104,6 +1106,7 @@ class MEEGbuddy:
                 continue
             if value == 'all':
                 evoked = epochs.average()
+                indices = range(len(epochs))
             else:
                 indices = value_indices[value]
                 if condition is not None and downsample:
@@ -2199,7 +2202,7 @@ class MEEGbuddy:
                                                 keyword,hemi,*views),
                                     60,*gif_names)
                 if show:
-                    anim.show()
+                    plt.show()
 
     def interpolateArtifact(self,event,ar=False,keyword=None,
                             preprocessed=False,ica=False,mode='spline',
@@ -2357,16 +2360,25 @@ class MEEGbuddy:
 
     def sourceBootstrap(self,fs_dir,bemf,sourcef,coord_transf,event,snr=1.0,
                         ar=False,keyword_in=None,keyword_out=None,method='dSPM',
-                        pick_ori='normal',tfr=True,fmin=7,fmax=35,nmin=3,nmax=10,
-                        steps=7,Nboot=250,Nave=50,seed=13,n_jobs=10,nlabels=100,
+                        pick_ori='normal',tfr=True,itc=True,
+                        fmin=7,fmax=35,nmin=3,nmax=10,steps=7,
+                        bands={'alpha':(7,15),'beta':(15,35)},
+                        Nboot=1000,Nave=50,seed=13,n_jobs=10,
                         use_fft=True,mode='same',batch=10,overwrite=False):
+        ''' You need enough bootstraps to get a good normal distribution
+            of your condition value means, 250 seems to do good. Nave is
+            a tradeoff between more extreme values and lower snr of source
+            estimates. Nboot is better the greater the number but 100 is
+            approximately 40 GB with tfr'''
         freqs = np.logspace(np.log10(fmin),np.log10(fmax),steps)
+        band_inds = {band:[i for i,f in enumerate(freqs) if
+                     f >= bands[band][0] and f <= bands[band][1]]
+                     for band in bands if [i for i,f in enumerate(freqs) if
+                     f >= bands[band][0] and f <= bands[band][1]]}
         n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
         keyword_out = keyword_in if keyword_out is None else keyword_out
         fname = self._fname('sources','bootstrap','.npz',event,
-                            ar and not keyword_out,keyword_out,snr,method,
-                            pick_ori,tfr,Nboot,Nave,seed,fmin,fmax,nmin,nmax,
-                            steps,use_fft,mode)
+                            'ar'*(ar and not keyword_out),keyword_out)
         if os.path.isfile(fname) and not overwrite:
             raise ValueError('Bootstraps already exist, use overwrite=True')
         np.random.seed(seed)
@@ -2384,7 +2396,6 @@ class MEEGbuddy:
                                epochs,bl_epochs)
         events = epochs.events[:,2]
         bl_events = bl_epochs.events[:,2]
-        sph = int(fwd['nsource']/2) #sources per hemisphere
 
         stcs = np.memmap('sb_%s_%s_%s_workfile' %(event,ar,keyword_out),
                  dtype='float64', mode='w+',
@@ -2393,20 +2404,27 @@ class MEEGbuddy:
             Ws = mne.time_frequency.morlet(epochs.info['sfreq'],
                                                freqs, n_cycles=n_cycles,
                                                zero_mean=False)
-            tfrs = np.memmap('sb_tfr_%s_%s_%s_workfile' %(event,ar,keyword_out),
-                             dtype='float64', mode='w+',
-                             shape=(batch,2,steps,fwd['nsource'],len(epochs.times)))
+            powers = {band:np.memmap('sb_tfr_%s_%s_%s_workfile' %(event,ar,keyword_out),
+                                     dtype='float64', mode='w+',
+                                     shape=(batch,fwd['nsource'],len(epochs.times)))
+                      for band in bands}
+            if itc:
+                itcs = {band:np.memmap('sb_tfr_%s_%s_%s_workfile' %(event,ar,keyword_out),
+                                        dtype='float64', mode='w+',
+                                        shape=(batch,fwd['nsource'],len(epochs.times)))
+                      for band in bands}
+            else:
+                itcs = None
         else:
-            tfrs = Ws = None
+            powers = itcs = Ws = None
         mins = range(0,Nboot-batch +1,batch)
         maxs = range(batch,Nboot+1,batch)
         for i_min,i_max in zip(mins,maxs):
             print('Computing bootstraps %i to %i' %(i_min,i_max))
-            fname2 = self._fname('sources','bootstrap','.npz','%i-%i' %(i_min,i_max),
-                                 event,ar and not keyword_out,keyword_out,snr,method,
-                                 pick_ori,tfr,Nboot,Nave,seed,fmin,fmax,nmin,
-                                 nmax,steps,use_fft,mode)
-            if os.path.isfile(fname2):
+            fname2 = self._fname('sources','bootstrap','.npz',
+                                '%i-%i' %(i_min,i_max),event,
+                                'ar'*(ar and not keyword_out),keyword_out)
+            if os.path.isfile(fname2) and not overwrite:
                 continue
             for i,k in enumerate(tqdm(range(i_min,i_max))):
                 indices = bootstrap_indices[k]
@@ -2420,50 +2438,194 @@ class MEEGbuddy:
                 stcs[i] = stc.data[:]
                 if tfr:
                     this_tfr = mne.time_frequency.tfr.cwt(stc.data.copy(),Ws,
-                                                      use_fft=use_fft,
-                                                      mode=mode)
+                                                          use_fft=use_fft,
+                                                          mode=mode)
                     power = (this_tfr * this_tfr.conj()).real
-                    itc = np.angle(this_tfr)
-                    for f_ind in range(steps):
-                        tfrs[i,0,f_ind] = power[:,f_ind]
-                        tfrs[i,1,f_ind] = itc[:,f_ind]
-            np.savez_compressed(fname2,stcs=stcs,tfrs=tfrs,
-                                freqs=freqs,n_cycles=n_cycles)
-        #
-        # Done with all the batches, now combine
-        #
-        stcs = np.memmap('sb_%s_%s_%s_workfile' %(event,ar,keyword_out),
-                             dtype='float64', mode='w+',
-                             shape=(Nboot,fwd['nsource'],len(epochs.times)))
-        if tfr:
-            tfrs = np.memmap('sb_tfr_%s_%s_%s_workfile' %(event,ar,keyword_out),
-                             dtype='float64', mode='w+',
-                             shape=(Nboot,steps,fwd['nsource'],len(epochs.times)))
-        for i_min,i_max in zip(mins,maxs):
-            fname2 = self._fname('sources','bootstrap','.npz','%i-%i' %(i_min,i_max),
-                                 event,ar and not keyword_out,keyword_out,snr,method,
-                                 pick_ori,tfr,Nboot,Nave,seed,fmin,fmax,nmin,
-                                 nmax,steps,use_fft,mode)
-            if os.path.isfile(fname2):
-                stcs2,tfrs2 = np.load(fname2)['stcs'], np.load(fname2)['tfrs']
-                if stcs2.any():
-                    stcs[i_min:i_max] = stcs2
-                if tfrs2.any():
-                    tfrs[i_min:i_max] = tfrs2
-            else:
-                print('Bootstraps not found for %i to %i' %(i_min,i_max))
-        np.savez_compressed(fname,stcs=stcs,events=events,stc=stc,
-                            bootstrap_indices=bootstrap_indices,tfrs=tfrs,
-                            freqs=freqs,n_cycles=n_cycles)
+                    if itc:
+                        this_itc = np.angle(this_tfr)
+                    for band,inds in band_inds.items():
+                        powers[band][i] = power[:,inds].mean(axis=1)
+                        if itc:
+                            itcs[band][i] = this_itc[:,inds].mean(axis=1)
+            np.savez_compressed(fname2,stcs=stcs)
+            if tfr:
+                for band in bands:
+                    fname3 = self._fname('sources','bootstrap_power_%s' %(band),
+                                         '.npz','%i-%i' %(i_min,i_max),event,
+                                         'ar'*(ar and not keyword_out),keyword_out)
+                    np.savez_compressed(fname3,powers=powers[band])
+                    if itc:
+                        fname4 = self._fname('sources','bootstrap_itc_%s' %(band),
+                                             '.npz','%i-%i' %(i_min,i_max),event,
+                                             'ar'*(ar and not keyword_out),keyword_out)
+                        np.savez_compressed(fname4,itcs=itcs[band])
+        inv = self._generate_inverse(epochs,fwd,bl_epochs,lambda2,method,
+                                     pick_ori)
+        evoked = epochs.average()
+        stc = apply_inverse(evoked,inv,lambda2=lambda2,method=method,
+                            pick_ori=pick_ori)
+        np.savez_compressed(fname,events=events,batch=batch,tfr=tfr,itc=itc,
+                            freqs=freqs,n_cycles=n_cycles,bands=bands,
+                            bootstrap_indices=bootstrap_indices)
         self._save_source(stc,event,'Bootstrap','base',ar=ar,keyword=keyword_out)
 
-    def sourceCorrelation():
+    def sourceCorrelation(self,event,condition,ar=False,keyword_in=None,
+                          keyword_out=None,baseline=(-0.5,-0.1),
+                          n_permutations=1000,overwrite=False):
+        ''' baseline only supported in source window (this also means
+            locked to the same event as the source estimate) due to
+            normalization issues.
+            n_permutations = 1000 takes ~5 hours with tfr'''
         keyword_out = keyword_in if keyword_out is None else keyword_out
-        fname = self._fname('sources','bootstrap','.npz',event,ar and not keyword_out,
-                            keyword_out,method,pick_ori,tfr,Nboot,Nave,seed,
-                            fs_av,fmin,fmax,nmin,nmax,steps)
-        if os.path.isfile(fname) and not overwrite:
-            raise ValueError('Bootstraps already exist, use overwrite=True')
+        fname_in = self._fname('sources','bootstrap','.npz',event,
+                               'ar'*(ar and not keyword_out),keyword_in)
+        fname_out = self._fname('sources','correlation','.npz',event,
+                                'ar'*(ar and not keyword_out),keyword_in)
+        if not os.path.isfile(fname_in):
+            raise ValueError('Bootstraps must be computed first' +
+                             '(check that keywords match)')
+        if os.path.isfile(fname_out) and not overwrite:
+            raise ValueError('Correlations already exist, use overwrite=True')
+        f = np.load(fname_in)
+        bootstrap_indices = f['bootstrap_indices']
+        Nboot,Nave = bootstrap_indices.shape
+        batch = f['batch'].item()
+        bands = f['bands'].item()
+        tfr = f['tfr'].item()
+        itc = f['itc'].item()
+        events = f['events']
+        bootstrap_conditions = []
+        for i in range(Nboot):
+            bootstrap_conditions.append(
+                np.nanmean(np.array([self.behavior[condition][j]
+                                    for j in bootstrap_indices[i]])))
+        stc = self._load_source(event,'Bootstrap','base',ar=ar,keyword=keyword_in)
+        if baseline[0] < stc.tmin or baseline[1] > stc.times[-1]:
+            raise ValueError('Baseline outside time range')
+        nSRC,nTIMES = stc.shape
+        bl_indices = np.where((stc.times >= baseline[0]) &
+                              (stc.times < baseline[1]))[0]
+        permutation_indices = np.random.randint(0,Nboot,(n_permutations,Nboot))
+        stc_copy = stc.copy()
+        stc_copy.data.fill(0)
+        #
+        stcs = np.memmap('sb_%s_%s_%s_workfile' %(event,ar,keyword_out),
+                         dtype='float64', mode='w+',
+                         shape=(Nboot,nSRC,nTIMES))
+        stc_result = stc_copy.copy()
+        bl_dist = np.zeros((stc.data.shape[0],n_permutations))
+        if tfr:
+            powers = {band:np.memmap(('sb_power_%s_%s_%s_%s_workfile'
+                                      %(event,ar,keyword_out,band)),
+                                     dtype='float64', mode='w+',
+                                     shape=(Nboot,nSRC,nTIMES))
+                      for band in bands}
+            power_result = {band:stc_copy.copy() for band in bands}
+            power_bl_dist = {band:np.zeros((stc.data.shape[0],n_permutations))
+                             for band in bands}
+            if itc:
+                itcs = {band:np.memmap(('sb_itc_%s_%s_%s_%s_workfile'
+                                        %(event,ar,keyword_out,band)),
+                                        dtype='float64', mode='w+',
+                                        shape=(Nboot,nSRC,nTIMES))
+                        for band in bands}
+                itc_result = {band:stc_copy.copy() for band in bands}
+                itc_bl_dist = {band:np.zeros((stc.data.shape[0],n_permutations))
+                               for band in bands}
+        mins = range(0,Nboot-batch +1,batch)
+        maxs = range(batch,Nboot+1,batch)
+        for i_min,i_max in zip(mins,maxs):
+            print('Combining bootstraps %i to %i source' %(i_min,i_max),end='')
+            fname2 = self._fname('sources','bootstrap','.npz',
+                                 '%i-%i' %(i_min,i_max),event,
+                                 'ar'*(ar and not keyword_out),keyword_out)
+            stcs2 = np.load(fname2)['stcs']
+            for i,j in enumerate(range(i_min,i_max)):
+                stcs[j] = stcs2[i]
+            del stcs2
+            if tfr:
+                for band in bands:
+                    print(' %s tfr' %(band), end='')
+                    fname3 = self._fname('sources','bootstrap_power_%s' %(band),
+                                         '.npz','%i-%i' %(i_min,i_max),event,
+                                         'ar'*(ar and not keyword_out),keyword_out)
+                    powers2 = np.load(fname3)['powers']
+                    if itc:
+                        print(' %s itc' %(band), end='')
+                        fname4 = self._fname('sources','bootstrap_itc_%s' %(band),
+                                             '.npz','%i-%i' %(i_min,i_max),event,
+                                             'ar'*(ar and not keyword_out),keyword_out)
+                        itcs2 = np.load(fname4)['itcs']
+                    for i,j in enumerate(range(i_min,i_max)):
+                        powers[band][j] = powers2[i]
+                        if itc:
+                            itcs[band][j] = itcs2[i]
+                    del powers2
+                    if itc:
+                        del itcs2
+            print(' Done.')
+        # Get baseline distribution
+        for s_ind in tqdm(range(nSRC)):
+            s_data = stcs[:,s_ind]
+            if tfr:
+                power_s_data = {band:powers[band][:,s_ind] for band in bands}
+                if itc:
+                    itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
+            for p_ind in range(n_permutations):
+                dist = s_data[:,bl_indices].mean(axis=1)
+                _,_,r,_,_ = linregress(dist[permutation_indices[p_ind]],
+                                       bootstrap_conditions)
+                bl_dist[s_ind,p_ind] = r
+                if tfr:
+                    for band in bands:
+                        power_dist = power_s_data[band][:,bl_indices].mean(axis=1)
+                        _,_,r,_,_ = linregress(power_dist[permutation_indices[p_ind]],
+                                               bootstrap_conditions)
+                        power_bl_dist[band][s_ind,p_ind] = r
+                        if itc:
+                            itc_dist = itc_s_data[band][:,bl_indices].mean(axis=1)
+                            _,_,r,_,_ = linregress(itc_dist[permutation_indices[p_ind]],
+                                                   bootstrap_conditions)
+                            itc_bl_dist[band][s_ind,p_ind] = r
+        # Get p-values from permutation distribution
+        for s_ind in tqdm(range(nSRC)):
+            s_data = stcs[:,s_ind]
+            if tfr:
+                power_s_data = {band:powers[band][:,s_ind] for band in bands}
+                if itc:
+                    itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
+            for t_ind in range(nTIMES):
+                dist = s_data[:,t_ind]
+                _,_,r,_,_ = linregress(dist,bootstrap_conditions)
+                p = sum(abs(bl_dist[s_ind])>abs(r))/n_permutations
+                stc_result.data[s_ind,t_ind] = ((1.0/p)*np.sign(r) if p > 0 else
+                                                (1.0/n_permutations)*np.sign(r))
+                if tfr:
+                    for band in bands:
+                        power_dist = power_s_data[band][:,t_ind]
+                        _,_,r,_,_ = linregress(power_dist,bootstrap_conditions)
+                        p = sum(abs(power_bl_dist[band][s_ind])>abs(r))/n_permutations
+                        power_result[band].data[s_ind,t_ind] = \
+                            ((1.0/p)*np.sign(r) if p > 0 else
+                             (1.0/n_permutations)*np.sign(r))
+                        if itc:
+                            itc_dist = itc_s_data[band][:,t_ind]
+                            _,_,r,_,_ = linregress(itc_dist,bootstrap_conditions)
+                            p = sum(abs(itc_bl_dist[band][s_ind])>abs(r))/n_permutations
+                            itc_result[band].data[s_ind,t_ind] = \
+                                ((1.0/p)*np.sign(r) if p > 0 else
+                                 (1.0/n_permutations)*np.sign(r))
+        self._save_source(stc_result,event,condition,'correlation',
+                          ar=ar,keyword=keyword_out)
+        if tfr:
+            for band in bands:
+                self._save_source(power_result[band],event,condition,
+                                  'power_correlation_%s' %(band),ar=ar,
+                                  keyword=keyword_out)
+                if itc:
+                    self._save_source(itc_result[band],event,condition,
+                                      'itc_correlation_%s' %(band),ar=ar,
+                                      keyword=keyword_out)
 
     def noreunPhi(self,event,condition,values=None,ar=False,keyword_in=None,
                   keyword_out=None,tmin=None,tmax=None,npoint_art=0,
@@ -2824,7 +2986,9 @@ def _noreun_random_source(inv,lambda2,method,Y,
                          method=method,pick_ori=pick_ori,verbose=False)
     return stc.data
 
-def create_demi_events(raw, windows_length, windows_shift, epoches_nun=0):
+def create_demi_events(raw, window_size, shift, epoches_nun=0):
+    windows_length = raw.info['sfreq']*window_size
+    windows_shift = raw.info['sfreq']*shift
     import math
     # T = raw._data.shape[1]
     T = raw.last_samp - raw.first_samp + 1
