@@ -1,5 +1,7 @@
 MEEGbuddy/scratch.py
 MEEGbuddyDemo/data/*
+MEEGbuddyDemo/.ipynb_checkpoints
+MEEGbuddyDemo/cachedir
 .ipynb_checkpoints
 MEEGbuddy.egg-info
 build/lib/MEEGbuddy
