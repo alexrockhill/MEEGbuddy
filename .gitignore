@@ -1,5 +1,8 @@
+*.gif
 MEEGbuddy/scratch.py
 MEEGbuddyDemo/data/*
+!MEEGbuddyDemo/data/plots/
+MEEGbuddyDemo/data/plots/*.gif
 MEEGbuddyDemo/.ipynb_checkpoints
 MEEGbuddyDemo/cachedir
 .ipynb_checkpoints
