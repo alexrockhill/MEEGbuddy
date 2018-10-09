@@ -2,7 +2,8 @@
 MEEGbuddy/scratch.py
 MEEGbuddyDemo/data/*
 !MEEGbuddyDemo/data/plots/
-MEEGbuddyDemo/data/plots/*.gif
+*.gif
+!MEEGbuddyDemo/data/plots/Demo/Demo_Demo_eeg_meg_Response_RewardType_High_ar_both_lat_med_cau_dor_ven_fro_par-source_plot.gif
 MEEGbuddyDemo/.ipynb_checkpoints
 MEEGbuddyDemo/cachedir
 .ipynb_checkpoints
