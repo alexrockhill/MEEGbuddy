@@ -33,7 +33,7 @@ conda-verify==2.0.0
 configobj==5.0.6
 conpy==0.2
 contextlib2==0.5.5
-cryptography==2.2.2
+cryptography==2.3.1
 cycler==0.10.0
 Cython==0.28.2
 cytoolz==0.9.0.1
@@ -118,7 +118,7 @@ openpyxl==2.5.3
 packaging==17.1
 pandas==0.23.0
 pandocfilters==1.4.2
-paramiko==2.4.1
+paramiko==2.4.2
 parso==0.2.0
 partd==0.3.8
 path.py==11.0.1
@@ -174,7 +174,7 @@ QtAwesome==0.4.4
 qtconsole==4.3.1
 QtPy==1.4.1
 requests==2.18.4
-rope==0.10.7
+rope==0.11.0
 ruamel-yaml==0.15.35
 scikit-image==0.13.1
 scikit-learn==0.19.1
