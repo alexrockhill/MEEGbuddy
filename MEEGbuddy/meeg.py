@@ -18,11 +18,13 @@ from mne.minimum_norm import (make_inverse_operator,apply_inverse_epochs,
                               apply_inverse,read_inverse_operator,
                               write_inverse_operator,source_induced_power,
                               source_band_induced_power)
+from mne.connectivity import spectral_connectivity
 import glob,re
 import numpy as np
 import os
 from .psd_multitaper_plot_tools import ButtonClickProcessor
 from scipy.stats import stats, mstats
+from scipy import linalg
 from autoreject import AutoReject, compute_thresholds, set_matplotlib_defaults
 try:
     import seaborn as sns
@@ -30,6 +32,7 @@ try:
     import matplotlib.patches as patches
     import matplotlib.ticker as ticker
     from matplotlib.colors import SymLogNorm,LogNorm
+    from matplotlib import animation, rc
 except:
     print('Unable to import plot tools.')
 from functools import partial
@@ -241,6 +244,22 @@ class MEEGbuddy:
                                  eog=True,ecg=True,emg=True)
         return raw
 
+    def _has_raw(self,preprocessed=False,ica=False,keyword=None):
+        if keyword or ica:
+            preprocessed = False
+        if keyword:
+            ica = False
+        if preprocessed or ica or keyword:
+            return os.path.isfile(self._fname('raw_preprocessed','raw','.fif',
+                                              'ica'*ica,keyword))
+        else:
+            return True
+
+    def getTriggers(self,preprocessed=False,ica=False,keyword=None):
+        raw = self._load_raw(preprocessed=preprocessed,ica=ica,keyword=keyword)
+        events = find_events(raw)
+        return np.unique(events[:,2])
+
     def remove(self,event=None,preprocessed=False,ica=False,ar=False,
                keyword=None):
         dir_name = 'raw_preprocessed' if event is None else 'epochs'
@@ -262,6 +281,9 @@ class MEEGbuddy:
         else:
             print('No ICA data file found %s'
                     %(keyword if keyword is not None else ''))
+
+    def _has_ICA(self,keyword=None):
+        return os.path.isfile(self._fname('ica','ica','.fif',keyword))
 
     def _default_aux(self,inst,eogs,ecgs):
         if eogs is None:
@@ -285,34 +307,43 @@ class MEEGbuddy:
             inst_info['chs'] += inst.info['chs']
             inst_info['nchan'] += inst.info['nchan']
 
-        if isinstance(inst,BaseRaw):
+        if isinstance(insts[0],BaseRaw):
             return RawArray(inst_data,inst_info)
         else:
-            return EpochsArray(inst_data,inst_info,events=inst[0].events,tmin=inst[0].tmin)
+            return EpochsArray(inst_data,inst_info,events=insts[0].events,tmin=inst[0].tmin)
 
     def findICA(self,eogs=None,ecgs=None,event=None,preprocessed=False,ar=False,
                 keyword_in=None,keyword_out=None,n_components=None,
                 l_freq=None,h_freq=40,detrend=1,component_optimization_n=3,
-                vis_tmin=None,vis_tmax=None,seed=11,overwrite=False):
+                tmin=None,tmax=None,vis_tmin=None,vis_tmax=None,seed=11,
+                overwrite=False):
         # keyword_out functionality was added so that ICA can be computed on
         # one raw data and applied to another
         # note: filter only filters evoked
-        if os.path.isfile(self._fname('ica','ica','.fif',keyword_out)) and not overwrite:
+        data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
+
+        if (all([os.path.isfile(self._fname('ica','ica','.fif',
+                dt if keyword_out is None else dt + '_' + keyword_out))
+                for dt in data_types]) and not overwrite):
             raise ValueError('ICA already calculated, use \'overwrite=True\' ' +
                              'to recalculate.')
         if event is None:
             inst = self._load_raw(preprocessed=preprocessed,keyword=keyword_in)
         else:
             inst = self._load_epochs(event,ar=ar,keyword=keyword_in)
+            tmin,tmax = self._default_t(event,tmin,tmax)
+            inst = inst.crop(tmin=tmin,tmax=tmax)
         eogs,ecgs = self._default_aux(inst,eogs,ecgs)
         if not all([ch in inst.ch_names for ch in eogs + ecgs]):
             raise ValueError('Auxillary channels not in channel list.')
         if n_components is None:
-            n_components = inst.estimate_rank()
-
-        data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
+            if isinstance(inst,BaseRaw):
+                n_components = inst.estimate_rank()
+            else:
+                n_components = len(inst.info['chs'])
         ica_insts = []
         for dt in data_types:
+            print(dt)
             ica = ICA(method='fastica',n_components=n_components,
                       random_state=seed)
             inst2 = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
@@ -337,15 +368,15 @@ class MEEGbuddy:
             inst2 = ica.apply(inst2, exclude=ica.exclude)
             self._save_ICA(ica,keyword=kw)
             ica_insts.append(inst2)
-        ica_insts.append(inst.copy().pick_types(meg=False,eeg=False,eog=True,ecg=True,stim=True))
-
+        ica_insts.append(inst.copy().pick_types(meg=False,eeg=False,eog=True,
+                                                ecg=True,stim=True))
         inst = self._combine_insts(ica_insts)
 
         if isinstance(inst,BaseRaw):
             self._save_raw_preprocessed(inst,ica=(keyword_out is None),
                                         keyword=keyword_out)
         else:
-            self._save_epochs(inst,keyword=
+            self._save_epochs(inst,event,keyword=
                 (keyword_out if keyword_out is not None else 'ica'))
 
     def _optimize_components(self,raw,ica,all_scores,component_optimization_n,keyword,kw):
@@ -443,11 +474,15 @@ class MEEGbuddy:
         plt.close(fig)
 
     def plotICA(self,eogs=None,ecgs=None,preprocessed=False,event=None,ar=False,
-                keyword_in=None,keyword_out=None,show=True):
+                keyword_in=None,keyword_out=None,tmin=None,tmax=None,
+                ylim=dict(eeg=[-40,40],grad=[-400,400],mag=[-1000,1000]),
+                show=True):
         if event is None:
             inst = self._load_raw(preprocessed=preprocessed,keyword=keyword_in)
         else:
             inst = self._load_epochs(event,ar=ar,keyword=keyword_in)
+            tmin,tmax = self._default_t(event,tmin,tmax)
+            inst = inst.crop(tmin=tmin,tmax=tmax)
         eogs,ecgs = self._default_aux(inst,eogs,ecgs)
         data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
         ica_insts = []
@@ -475,10 +510,18 @@ class MEEGbuddy:
                 for ecg in ecgs:
                     evoked = self._load_evoked('ica_%s' %(ecg),keyword=kw)
                     self._plot_ICA_overlay(ica,evoked,ecg,show)
+            else:
+                fig = inst.average().plot(show=False,ylim=ylim,
+                                          window_title='Before ICA')
+                self._show_fig(fig,show)
+                fig2 = inst2.average().plot(show=False,ylim=ylim,
+                                            window_title='After ICA')
+                self._show_fig(fig2,show)
             plt.show()
             ica_insts.append(inst2)
             self._save_ICA(ica,keyword=kw)
-        ica_insts.append(inst.copy().pick_types(meg=False,eeg=False,eog=True,ecg=True,stim=True))
+        ica_insts.append(inst.copy().pick_types(meg=False,eeg=False,eog=True,
+                                                ecg=True,stim=True))
 
         inst = self._combine_insts(ica_insts)
 
@@ -486,7 +529,7 @@ class MEEGbuddy:
             self._save_raw_preprocessed(inst,ica=(keyword_out is None),
                                         keyword=keyword_out)
         else:
-            self._save_epochs(inst,keyword=
+            self._save_epochs(inst,event,keyword=
                 (keyword_out if keyword_out is not None else 'ica'))
 
     def _plot_ICA_overlay(self,ica,evoked,ch,show):
@@ -529,7 +572,12 @@ class MEEGbuddy:
         epochs = read_epochs(fname,verbose=False,preload=True)
         print('%s epochs loaded' %(event) + ' for autoreject'*ar +
               ' for %s' %(keyword)*(keyword is not None))
+        epochs._data = epochs._data.astype('float64') # mne bug work-around
         return epochs
+
+    def _has_epochs(self,event,ar=False,keyword=None):
+        return os.path.isfile(self._fname('epochs','epo','.fif',event,
+                              'ar'*ar,keyword))
 
     def _load_evoked(self,event,ar=False,keyword=None):
         fname = self._fname('evoked','ave','.fif',event,'ar'*ar,keyword)
@@ -743,8 +791,7 @@ class MEEGbuddy:
         plt.close('all')
 
     def plotRaw(self,n_per_screen=20,scalings=None,preprocessed=False,
-                ica=False,keyword=None,l_freq=0.5,h_freq=40,
-                interpolate_bads=True,overwrite=False):
+                ica=False,keyword=None,l_freq=0.5,h_freq=40,overwrite=False):
         if (os.path.isfile(self._fname('raw_preprocessed','raw','.fif',keyword))
             and not overwrite):
             print('Use overwrite = True to overwrite')
@@ -768,9 +815,22 @@ class MEEGbuddy:
                  title="%s Bad Channel Selection" % self.subject, order=order,
                  scalings=scalings)
         raw.info['bads'] = raw2.info['bads']
-        if interpolate_bads:
-            raw = raw.interpolate_bads(reset_bads=True)
         self._save_raw_preprocessed(raw,ica=ica,keyword=keyword)
+
+    def interpolateBads(self,preprocessed=False,ica=False,event=None,ar=False,
+                        keyword_in=None,keyword_out=None):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
+        if event is None:
+            raw = self._load_raw(preprocessed=preprocessed,ica=ica,
+                                 keyword=keyword_in)
+            raw = raw.interpolate_bads(reset_bads=True)
+            self._save_raw_preprocessed(raw,ica=ica and not keyword_out,
+                                        keyword=keyword_out)
+        else:
+            epo = self._load_epochs(event,ar=ar,keyword=keyword_in)
+            epo = epo.interpolate_bads(reset_bads=True)
+            self._save_epochs(event,ar=ar and not keyword_out,
+                              keyword=keyword_out)
 
     def makeEpochs(self,preprocessed=False,ica=False,keyword_in=None,
                    keyword_out=None,detrend=0,normalized=True,overwrite=False):
@@ -786,7 +846,11 @@ class MEEGbuddy:
                    i in self.exclude_response)]
         if normalized:
             # make baseline epochs
-            baseline_ch,tmin,tmax = self.events['Baseline']
+            try:
+                baseline_ch,tmin,tmax = self.events['Baseline']
+            except:
+                raise ValueError('Baseline channel is not defined properly, ' +
+                                 'maybe you meant to use normalized=False')
             events = find_events(raw,stim_channel=baseline_ch,
                                  output="onset",verbose=False)
             events = events[include,:]
@@ -872,13 +936,15 @@ class MEEGbuddy:
         self._save_epochs(bl_epochs,'Baseline',keyword=keyword_out)
 
     def plotEpochs(self,event,n_epochs=20,n_channels=20,scalings=None,
-                   l_freq=None,h_freq=None,ar=False,keyword_in=None,
-                   keyword_out=None):
+                   tmin=None,tmax=None,l_freq=None,h_freq=None,ar=False,
+                   keyword_in=None,keyword_out=None):
         # note: if linear trend, apply l_freq filter
         keyword_out = keyword_in if keyword_out is None else keyword_out
         epochs = self._load_epochs(event,ar=ar,keyword=keyword_in)
+        tmin,tmax = self._default_t(event,tmin,tmax)
+        epochs_copy = epochs.copy().crop(tmin=tmin,tmax=tmax)
         if l_freq is not None or h_freq is not None:
-            epochs_copy = epochs.copy().filter(l_freq=l_freq,h_freq=h_freq)
+            epochs_copy = epochs_copy.filter(l_freq=l_freq,h_freq=h_freq)
         if len(epochs.event_id) != len(epochs):
             event_id = epochs.event_id
             epochs.event_id = {str(i):i for i in range(len(epochs))}
@@ -1032,20 +1098,13 @@ class MEEGbuddy:
                 self._show_fig(fig,show)
 
 
-    def dropEpochsByBehaviorIndices(self,bad_indices,event=None,ar=False,
+    def dropEpochsByBehaviorIndices(self,bad_indices,event,ar=False,
                                     keyword_in=None,keyword_out=None):
-        if event is None:
-            for event in self.events:
-                self.dropEpochsByBehaviorIndices(bad_indices,event=event,
-                                                 ar=ar,keyword_in=keyword_in,
-                                                 keyword_out=keyword_out)
         epochs = self._load_epochs(event,ar=ar,keyword=keyword_in)
         good_indices = [i for i in range(self.n) if i not in bad_indices]
         epochs_indices = self._behavior_to_epochs_indices(epochs,good_indices)
-        if keyword_out:
-            ar=False
-        self._save_epochs(epochs[epochs_indices],event,ar=ar,
-                          keyword=keyword_out)
+        self._save_epochs(epochs[epochs_indices],event,
+                          ar=False if keyword_out else ar,keyword=keyword_out)
 
     def markBadChannels(self,bad_channels,event=None,ar=False,keyword_in=None,
                         keyword_out=None,preprocessed=False,ica=False):
@@ -2137,8 +2196,8 @@ class MEEGbuddy:
 
     def plotSourceSpace(self,event,condition,values=None,tmin=None,tmax=None,
                         fs_av=False,ar=False,keyword=None,downsample=False,
-                        seed=11,hemi='both',size=(800,800),time_dilation=10,
-                        clim='default',use_saved_stc=False, gif_combine=True,
+                        seed=11,hemi='both',size=(800,800),time_dilation=25,
+                        clim='auto',use_saved_stc=False, gif_combine=True,
                         views=['lat','med','cau','dor','ven','fro','par'],
                         show=True):
         ''' This may take some time... plots each individual view and then
@@ -2180,8 +2239,9 @@ class MEEGbuddy:
                 stc_Evoked = epochs[indices].average()
                 stc = apply_inverse(stc_Evoked,inv,lambda2=lambda2,
                                     method=method,pick_ori=pick_ori,verbose=False)
-            if clim == 'default':
-                clim = dict(kind='value',lims=(stc.data.min(),stc.data.mean(),stc.data.max()))
+            #if clim == 'default':
+            #    clim = dict(kind='value',lims=(stc.data.min(),stc.data.mean(),
+            #                                   stc.data.max()))
 
             gif_names = []
             for view in views:
@@ -2189,9 +2249,9 @@ class MEEGbuddy:
                                        condition,value,'ar'*ar,keyword,hemi,view)
                 fig = [mlab.figure(size=size)]
                 fig = stc.plot(subjects_dir=self.subjects_dir,subject=self.subject,
-                           hemi=hemi,clim=clim,views=[view],figure=fig)
-                fig.save_movie(gif_name,tmin=tmin,tmax=tmax,
-                               time_dilation=time_dilation)
+                               hemi=hemi,clim=clim,views=[view],figure=fig,
+                               colormap='mne')
+                fig.save_movie(gif_name,time_dilation=time_dilation)
                 fig.close()
                 gif_names.append(gif_name)
 
@@ -2341,13 +2401,16 @@ class MEEGbuddy:
                      h_freq=None,l_freq=None):
         epochs = self._load_epochs(event,ar=ar,keyword=keyword_in)
         epochs = epochs.copy().filter(h_freq=h_freq,l_freq=l_freq)
-        if keyword_out:
-            ar = False
-        self._save_epochs(epochs,event,ar=ar,keyword=keyword_out)
+        self._save_epochs(epochs,event,ar=False if keyword_out else ar,
+                          keyword=keyword_out)
 
     def filterRaw(self,preprocessed=False,ica=False,keyword_in=None,
-                  keyword_out=None,l_freq=None,h_freq=None,maxwell=False):
+                  keyword_out=None,l_freq=None,h_freq=None,maxwell=False,
+                  overwrite=False):
         keyword_out = keyword_out if keyword_out is not None else keyword_in
+        fname = self._fname('raw_preprocessed','raw','.fif',ica,keyword_out)
+        if os.path.isfile(fname) and not overwrite:
+            raise ValueError('Raw file already exists, use overwrite=True')
         raw = self._load_raw(preprocessed=preprocessed,ica=ica,
                              keyword=keyword_in)
         if maxwell:
@@ -2566,7 +2629,7 @@ class MEEGbuddy:
             print(' Done.')
         # Get baseline distribution
         for s_ind in tqdm(range(nSRC)):
-            s_data = stcs[:,s_ind]
+            s_data = np.array(stcs[:,s_ind])
             if tfr:
                 power_s_data = {band:powers[band][:,s_ind] for band in bands}
                 if itc:
@@ -2589,7 +2652,7 @@ class MEEGbuddy:
                             itc_bl_dist[band][s_ind,p_ind] = r
         # Get p-values from permutation distribution
         for s_ind in tqdm(range(nSRC)):
-            s_data = stcs[:,s_ind]
+            s_data = np.array(stcs[:,s_ind])
             if tfr:
                 power_s_data = {band:powers[band][:,s_ind] for band in bands}
                 if itc:
@@ -2641,8 +2704,6 @@ class MEEGbuddy:
         if downsample:
             np.random.seed(seed)
         keyword_out = keyword_in if keyword_out is None else keyword_out
-        tmin_condition = tmin
-        tmax_condition = tmax # recorded if a condition is used instead of a value
         tmin,tmax = self._default_t(event,tmin,tmax)
         epochs = self._load_epochs(event,ar=ar,keyword=keyword_in)
         epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
@@ -2707,20 +2768,9 @@ class MEEGbuddy:
             Threshold=np.kron(np.ones((1,nTIME)),TT.reshape((nSRC,1)))
             return Threshold
 
-        def threshold_50_50(J,tind):
-            Threshold = np.zeros((J.shape))
-            for i in range(J.shape[0]):
-                Threshold[i,:] = np.median(abs(J[i,tind]))
-            return Threshold
-
-        def gettind(epochs,tmin,tmax,npoint_art,value):
-             # setup for if a dynamic tmin/max is to be used
-            if type(tmin) is dict:
-                tmin = tmin[value]
-            if type(tmax) is dict:
-                tmax = tmax[value]
+        def gettind(epochs,tmin,tmax,npoint_art):
             tind = np.intersect1d(np.where(tmin<=epochs.times),
-                                 np.where(epochs.times<=tmax))
+                                  np.where(epochs.times<=tmax))
             return tind[npoint_art:]
 
         def computePCI(binJ):
@@ -2747,13 +2797,9 @@ class MEEGbuddy:
                 Y,J,inv,lambda2,method,pick_ori,NUM,DEN,Norm = \
                     preprocess(epochs,indices,bl_tind,event,condition,value,
                                nTR,ar,keyword_in)
-                if alpha == '50_50':
-                    tind = gettind(epochs,tmin,tmax,npoint_art,value)
-                    Threshold = threshold_50_50(J,tind)
-                else:
-                    Threshold = baseline_bootstrap(Y,J,bl_tind,Norm,NUM,DEN,Nboot,
-                                                   alpha,info,inv,lambda2,method,
-                                                   pick_ori)
+                Threshold = baseline_bootstrap(Y,J,bl_tind,Norm,NUM,DEN,Nboot,
+                                               alpha,info,inv,lambda2,method,
+                                               pick_ori)
                 self._save_noreun_baseline(Y,J,Threshold,epochs[indices].events[:,2],
                                            bl_tmin,bl_tmax,Nboot,alpha,event,
                                            condition,value,ar,keyword_out)
@@ -2769,8 +2815,7 @@ class MEEGbuddy:
                     self._load_noreun_baseline(event,condition,
                                                'all' if shared_baseline else value,
                                                ar,keyword_out)
-                tind = gettind(epochs,tmin,tmax,npoint_art,value)
-                #J = J[:,tind]
+                tind = gettind(epochs,tmin,tmax,npoint_art)
                 # determines sources matrices
                 binJ=np.array(np.abs(J)>Threshold,dtype=int)
                 # rank the activity matrix - use mergesort that yields same results of Matlab
@@ -2899,79 +2944,101 @@ class MEEGbuddy:
                             'preprocessed'*preprocessed,'ica'*ica,keyword),
                 data_dict)
 
-    def showConnectivity(self,event,condition,values=None,
-                         bands={'theta':(4,8),'alpha':(8,15),'beta':(15,30)}):
-        # NOT DONE
-        values_dict = self._get_values(event,condition,values,
-                                       contrast,tfr=False,band_struct=[],eog=False)
-        epochs_data = self.epochs_current[event].get_data()
-        indices = self.epochs_dict[event][condition][value]
-        epochs_indices = [self.epochs_current[event].event_id[str(i)] for i in indices if
-                            str(i) in self.epochs_current[event].event_id]
-        this_chs = pick_types(self.epochs_current[event].info,meg=False,eeg=True)
-        epochs_data = epochs_data[epochs_indices,eeg_chs]
-        con, freqs, times, n_epochs, n_tapers = spectral_connectivity(
-            epochs_data, method='pli', mode='multitaper',
-            sfreq=self.epochs_current[event].info['sfreq'], fmin=fmin, fmax=fmax,
-            faverage=True, tmin=self.events[event][1], mt_adaptive=False, n_jobs=1)
-
-        # con is a 3D array where the last dimension is size one since we averaged
-        # over frequencies in a single band. Here we make it 2D
-        con = con[:, :, 0]
-
-        # Now, visualize the connectivity in 3D
-        from mayavi import mlab  # noqa
-
-        mlab.figure(size=(600, 600), bgcolor=(0.5, 0.5, 0.5))
-
-        # Plot the sensor locations
-        sens_loc = [raw.info['chs'][picks[i]]['loc'][:3] for i in idx]
-        sens_loc = np.array(sens_loc)
-
-        pts = mlab.points3d(sens_loc[:, 0], sens_loc[:, 1], sens_loc[:, 2],
-                            color=(1, 1, 1), opacity=1, scale_factor=0.005)
-
-        # Get the strongest connections
-        n_con = 20  # show up to 20 connections
-        min_dist = 0.05  # exclude sensors that are less than 5cm apart
-        threshold = np.sort(con, axis=None)[-n_con]
-        ii, jj = np.where(con >= threshold)
-
-        # Remove close connections
-        con_nodes = list()
-        con_val = list()
-        for i, j in zip(ii, jj):
-            if linalg.norm(sens_loc[i] - sens_loc[j]) > min_dist:
-                con_nodes.append((i, j))
-                con_val.append(con[i, j])
-
-        con_val = np.array(con_val)
-
-        # Show the connections as tubes between sensors
-        vmax = np.max(con_val)
-        vmin = np.min(con_val)
-        for val, nodes in zip(con_val, con_nodes):
-            x1, y1, z1 = sens_loc[nodes[0]]
-            x2, y2, z2 = sens_loc[nodes[1]]
-            points = mlab.plot3d([x1, x2], [y1, y2], [z1, z2], [val, val],
-                                 vmin=vmin, vmax=vmax, tube_radius=0.001,
-                                 colormap='RdBu')
-            points.module_manager.scalar_lut_manager.reverse_lut = True
-
-
-        mlab.scalarbar(title='Phase Lag Index (PLI)', nb_labels=4)
-
-        # Add the sensor names for the connections shown
-        nodes_shown = list(set([n[0] for n in con_nodes] +
-                               [n[1] for n in con_nodes]))
-
-        for node in nodes_shown:
-            x, y, z = sens_loc[node]
-            mlab.text3d(x, y, z, raw.ch_names[picks[node]], scale=0.005,
-                        color=(0, 0, 0))
-
-        view = (-88.7, 40.8, 0.76, np.array([-3.9e-4, -8.5e-3, -1e-2]))
-        mlab.view(*view)
+    def waveletConnectivity(self,event,condition,values=None,ar=False,
+                            keyword_in=None,keyword_out=None,downsample=True,
+                            seed=13,threshold=0.001,min_dist=0.05,
+                            tmin=None,tmax=None,fmin=None,fmax=None,
+                            method='pli',bandwidth=1,
+                            cwt_freqs='default',cwt_n_cyles='default',
+                            tube_radius=0.001,fig_width=600,fig_height=600,
+                            n_jobs=5,stc=True,fps=60,
+                            bands={'theta':(4,8),'alpha':(8,15),'beta':(15,30)}):
+        if downsample:
+            np.random.seed(seed)
+        keyword_out = keyword_in if keyword_out is None else keyword_out
+        tmin,tmax = self._default_t(event,tmin,tmax)
+        epochs = self._load_epochs(event,ar=ar,keyword=keyword_in)
+        epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
+        epochs = epochs.crop(tmin=min([tmin,bl_tmin]),tmax=max([tmax,bl_tmin]))
+        sfreq = epochs.info['sfreq']
+        if self.eeg:
+            epochs = epochs.set_eeg_reference(ref_channels='average',
+                                              projection=True,verbose=False)
+        values = self._default_values(values,condition)
+        value_indices = self._get_indices(epochs,condition,values)
+        nTR = min([len(value_indices[value]) for value in value_indices])
+        if fmin and fmax:
+            if bands:
+                print('Ignoring fmin and fmax because bands are defined')
+            else:
+                bands = {i:(i,i) for i in range(fmin,fmax+1,bandwidth)}
+        for dt in ['grad','mag']*self.meg + ['eeg']*self.eeg:
+            this_epochs = epochs.copy().pick_types(meg=False if dt == 'eeg' else dt,
+                                                   eeg=(dt == 'eeg'))
+            for band_name in bands:
+                fmin,fmax = bands[band_name]
+                freqs = (np.arange(fmin,fmax,bandwidth) if
+                         cwt_freqs == 'default' else cwt_freqs)
+                n_cycles = (np.arange(fmin,fmax,bandwidth) if
+                            cwt_n_cycles == 'default' else cwt_n_cycles)
+                for value in values:
+                    indices = value_indices[value]
+                    if downsample:
+                        print('Subsampling %i/%i %s %s.' %(nTR,len(indices),
+                                                           condition,value))
+                        np.random.shuffle(indices)
+                        indices = indices[:nTR]
+                    con,freqs,times,n_epochs,n_tapers = \
+                        spectral_connectivity(this_epochs[indices],method=method,
+                                              mode='cwt_morlet',sfreq=sfreq,
+                                              fmin=fmin,fmax=fmax,faverage=True,
+                                              tmin=tmin,cwt_freqs=freqs,
+                                              cwt_n_cycles=n_cycles,
+                                              n_jobs=n_jobs)
+                    con = con.squeeze()
+                    fig = mlab.figure(size=(fig_width,fig_height),
+                                      bgcolor=(0.5, 0.5, 0.5))
+                    view = (-88.7,40.8,0.76,np.array([-3.9e-4,-8.5e-3,-1e-2]))
+                    mlab.view(*view)
+                    mlab.scalarbar(title='Phase Lag Index (PLI)', nb_labels=4)
+                    sens_loc = np.array([ch['loc'][:3] for ch in
+                                         this_epochs.info['chs']])
+                    pts = mlab.points3d(sens_loc[:,0],sens_loc[:,1],sens_loc[:,2],
+                                        color=(1,1,1),opacity=1,scale_factor=0.005)
+                    con_sorted = np.sort(con, axis=None)
+                    con_threshold = con_sorted[-int(con.size*threshold)]
+                    con_max = con_sorted[-1]
+                    con_indices = np.where(con >= con_threshold)
+                    con_nodes = {t_ind:{} for t_ind in range(len(epochs.times))}
+                    for i,j,t in zip(*con_indices):
+                        if linalg.norm(sens_loc[i]-sens_loc[j]) > min_dist:
+                            con_nodes[t][(i,j)] = con[i,j,t]
+                    # initialize
+                    for (node0,node1) in con_nodes[0]:
+                        x1, y1, z1 = sens_loc[node0]
+                        x2, y2, z2 = sens_loc[node1]
+                        points = mlab.plot3d([x1,x2],[y1,y2],[z1,z2],[val,val],
+                                             vmin=con_threshold*0.01, vmax=con_max*0.01,
+                                             tube_radius=con_nodes[0][(node0,node1)]*0.01,
+                                             colormap='RdBu')
+                        points.module_manager.scalar_lut_manager.reverse_lut = True
+                    @mlab.animate
+                    def animate(t):
+                        for (node0,node1) in con_nodes[t]:
+                            x1, y1, z1 = sens_loc[node0]
+                            x2, y2, z2 = sens_loc[node1]
+                            points = mlab.plot3d([x1,x2],[y1,y2],[z1,z2],[val,val],
+                                                 vmin=con_threshold*0.01, vmax=con_max*0.01,
+                                                 tube_radius=con_nodes[t][(node0,node1)]*0.01,
+                                                 colormap='RdBu')
+                            points.module_manager.scalar_lut_manager.reverse_lut = True
+                    anim = animation.FuncAnimation(fig,animate,
+                                                   frames=len(epochs.times),
+                                                   interval=10,blit=True)
+                    anim.save(self._fname('plots','con_plot','.gif',event,
+                                          condition,value),
+                              fps=fps,writer='imagemagick',
+                              savefig_kwargs={'facecolor':'black'})
 
 def _noreun_random_source(inv,lambda2,method,Y,
                           info,nSRC,N0,nTR,randontrialsT):
