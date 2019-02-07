@@ -1,31 +1,52 @@
-import mne
-from mne.io import Raw, RawArray,set_eeg_reference,BaseRaw
-from mne.preprocessing import (ICA, read_ica, create_eog_epochs,
-                               create_ecg_epochs, fix_stim_artifact,
-                               maxwell_filter)
-from mne.epochs import concatenate_epochs
-from pandas import read_csv, DataFrame
-from mne import (compute_covariance, Epochs, EpochsArray, find_events,
-                 pick_types,read_source_estimate, compute_morph_matrix,
-                 set_log_level, read_trans, read_bem_solution,
-                 make_forward_solution, read_epochs, read_source_spaces,
-                 BaseEpochs, read_evokeds, EvokedArray, read_labels_from_annot,
-                 Label)
-from mne.utils import set_config
-from mne.time_frequency import (tfr_morlet,tfr_array_morlet,
-                                tfr_array_multitaper,AverageTFR,morlet)
-from mne.minimum_norm import (make_inverse_operator,apply_inverse_epochs,
-                              apply_inverse,read_inverse_operator,
-                              write_inverse_operator,source_induced_power,
-                              source_band_induced_power)
-from mne.connectivity import spectral_connectivity
-import glob,re
-import numpy as np
-import os
-from .psd_multitaper_plot_tools import ButtonClickProcessor
-from scipy.stats import stats, mstats
-from scipy import linalg
-from autoreject import AutoReject, compute_thresholds, set_matplotlib_defaults
+try:
+    from mne.io import Raw, RawArray,set_eeg_reference,BaseRaw
+    from mne.preprocessing import (ICA, read_ica, create_eog_epochs,
+                                   create_ecg_epochs, fix_stim_artifact,
+                                   maxwell_filter)
+    from mne.epochs import concatenate_epochs
+    from mne import (compute_covariance, Epochs, EpochsArray, find_events,
+                     pick_types,read_source_estimate, compute_morph_matrix,
+                     set_log_level, read_trans, read_bem_solution,
+                     make_forward_solution, read_epochs, read_source_spaces,
+                     BaseEpochs, read_evokeds, EvokedArray, read_labels_from_annot,
+                     Label)
+    from mne.utils import set_config
+    from mne.time_frequency import (tfr_morlet,tfr_array_morlet,
+                                    tfr_array_multitaper,AverageTFR,morlet)
+    from mne.minimum_norm import (make_inverse_operator,apply_inverse_epochs,
+                                  apply_inverse,read_inverse_operator,
+                                  write_inverse_operator,source_induced_power,
+                                  source_band_induced_power)
+    from mne.connectivity import spectral_connectivity
+    from mne.connectivity import spectral_connectivity
+    from mne.chpi import read_head_pos
+    from mne.stats import permutation_cluster_test
+except:
+    print('Unable to load MNE... must install to continue')
+try:
+    import glob,re,json
+    import numpy as np
+    from shutil import copyfile
+    from tqdm import tqdm
+    from pandas import read_csv, DataFrame
+    from functools import partial
+    from joblib import Parallel,delayed
+    import os
+    from .psd_multitaper_plot_tools import ButtonClickProcessor
+    from scipy.stats import stats, mstats, linregress
+    from scipy import linalg,interpolate
+    from scipy.signal import detrend
+    from scipy.io import savemat
+    import warnings
+    from . import pci
+    from .gif_combine import combine_gifs
+except:
+    print('Unable to import core tools (shutil,pandas,glob,re,json,os,scipy,' +
+          'tqdm,joblib,functools,warnings)... must install to continue')
+try:
+    from autoreject import AutoReject, compute_thresholds, set_matplotlib_defaults
+except:
+    print('Unable to import autoreject... you won\'t be able to use this feature')
 try:
     import seaborn as sns
     import matplotlib.pyplot as plt
@@ -35,26 +56,18 @@ try:
     from matplotlib import animation, rc
 except:
     print('Unable to import plot tools.')
-from functools import partial
-from scipy import linalg
-from mne.connectivity import spectral_connectivity
-from mne.stats import permutation_cluster_test
-from tqdm import tqdm
-from joblib import Parallel,delayed
-from . import pci
-from .gif_combine import combine_gifs
-import nitime.algorithms as tsa
-from scipy import interpolate
-from scipy.stats import linregress
-from scipy.signal import detrend
-from scipy.io import savemat
-from surfer import Brain
+try:
+    import nitime.algorithms as tsa
+except:
+    print('Unable to import nitime... you won\'t be able to use this feature')
+try:
+    from surfer import Brain
+except:
+    print('Unable to import pysurfer... you won\'t be able to use this feature')
 try:
     import naturalneighbor
 except:
     print('No naturalneighbor')
-import warnings
-from mne.chpi import read_head_pos
 try:
    from mne.viz import plot_head_positions
 except:
@@ -73,10 +86,12 @@ class MEEGbuddy:
     epochs are made, and autoreject is applied.
     All data is saved automatically in BIDS-inspired format.
     '''
-    def __init__(self, subject, fdata, behavior, baseline, stimuli, eeg=False,
-                 meg=False, response=None, task=None, no_response=None,
+    def __init__(self, file=None, subject=None, fdata=None, behavior=None,
+                 baseline=None, stimuli=None, eeg=False, meg=False,
+                 response=None, task=None, no_response=None,
                  exclude_response=None, tbuffer=1, subjects_dir=None,
-                 epochs=None, event=None, seed=551832):
+                 epochs=None, event=None, fs_subjects_dir=None, bemf=None,
+                 sourcef=None, coord_transf=None, seed=551832):
         '''
         fdata: one or more .fif files with event triggers and EEG data
         fbehavior: dictionary with variable names indexing a list of attributes
@@ -92,81 +107,148 @@ class MEEGbuddy:
         warnings.filterwarnings("ignore", category=DeprecationWarning)
         mne.set_log_level('error')
         set_log_level("ERROR")
-        self.subjects_dir = subjects_dir
-        if isinstance(fdata,list):
-            if self.subjects_dir is None:
-                self.subjects_dir = os.path.dirname(os.path.realpath(fdata[0]))
-                for f in fdata:
-                    subjects_dir_current = os.path.dirname(os.path.realpath(f))
-                    if subjects_dir_current != subjects_dir:
-                        warn('Directory estabilished as the directory for ' +
-                             'the first fdata entry.')
-        else:
-            if self.subjects_dir is None:
-                self.subjects_dir = os.path.dirname(os.path.realpath(fdata))
-            fdata = [fdata]
 
-        self.fdata = fdata
-        self.meg = meg
-        self.eeg = eeg
+        if file is None:
+            meta_data = {}
 
-        self.subject = subject
-        self.task = task
+            if subjects_dir is None:
+                subjects_dir = os.getcwd()
+                print('No subjects_dir supplied defaulting to current working directory')
+            meta_data['Subjects Directory'] = subjects_dir
 
-        processes = ['ica','epochs','TFR','noreun_phi','mat_files',
-                     'CPT','plots','sources','raw_preprocessed','evoked',
-                     'psd_multitaper','behavior']
-        if subjects_dir is None:
-            subjects_dir = os.getcwd() + '/'
+            if fdata is None:
+                raise ValueError('Please supply raw file or list of files to combine')
+            if not isinstance(fdata,list):
+                fdata = [fdata]
+            meta_data['Functional Data'] = fdata
 
-        self.process_dirs = {}
-        for process in processes:
-            self.process_dirs[process] = (subjects_dir + '/' + process +
-                                          '/' + self.subject + '/')
-            if not os.path.exists(self.process_dirs[process]):
-                os.makedirs(self.process_dirs[process])
+            meta_data['MEG'] = meg
+            meta_data['EEG'] = eeg
 
-        self.behavior = behavior
-        if self.behavior:
-            param_lengths = [len(self.behavior[param]) for param in self.behavior]
-            if len(np.unique(param_lengths)) > 1:
-                raise ValueError('All behavior parameters must index lists of the same length.')
-            self.n = param_lengths[0]
+            if subject is None:
+                raise ValueError('Subject name is required to differentiate subjects')
+            meta_data['Subject'] = subject
 
-        if no_response is None:
-            self.no_response = []
-        else:
-            self.no_response = no_response
+            meta_data['Task'] = task
 
-        if exclude_response is None:
-            self.exclude_response = []
-        else:
-            self.exclude_response = [trial for trial in exclude_response if
-                                     trial not in self.no_response]
+            processes = ['meta_data','raw','epochs','source_estimates','plots',
+                         'analyses']
 
-        self.events = stimuli
-        if any([len(self.events[event]) != 3 for event in self.events]):
-            raise ValueError('There must be a channel, start and stop time for each stimulus.')
+            meta_data['Process Directories'] = {}
+            for process in processes:
+                meta_data['Process Directories'][process] = \
+                    os.path.join(subjects_dir,process,subject)
+                if not os.path.exists(meta_data['Process Directories'][process]):
+                    os.makedirs(meta_data['Process Directories'][process])
 
-        if response:
-            if len(response) != 3:
-                raise ValueError('response must contain a channel, start time and stop time.')
-            self.events['Response'] = response
+            meta_data['Behavior'] = behavior
+            if meta_data['Behavior']:
+                param_lengths = [len(meta_data['behavior'][param]) for param in
+                                 meta_data['behavior']]
+                if len(np.unique(param_lengths)) > 1:
+                    raise ValueError('All behavior parameters must index lists of the same length.')
+                meta_data['N'] = param_lengths[0]
 
-        self.baseline = baseline
-        if not self.baseline or len(self.baseline) != 3:
-            print('Baseline must contain a channel, start time and stop time. ' +
-                  'Okay to continue, use normalized=False when making epochs')
-        self.events['Baseline'] = baseline
+            if no_response is None:
+                meta_data['No Response'] = []
+            else:
+                meta_data['No Response'] = no_response
 
-        self.tbuffer = tbuffer
+            if exclude_response is None:
+                meta_data['Exclude Response'] = []
+            else:
+                meta_data['Exclude Response'] = [trial for trial in exclude_response if
+                                                 trial not in meta_data['no_response']]
 
-        if epochs is not None and event is not None:
-            self._save_epochs(epochs,event)
+            meta_data['Events'] = stimuli
+            if any([len(stimuli) != 3 for event in stimuli]):
+                raise ValueError('There must be a channel, start and stop time for each stimulus.')
 
-        self._load_behavior()
+            if response:
+                if len(response) != 3:
+                    raise ValueError('response must contain a channel, start time and stop time.')
+                meta_data['Response'] = response
 
-        np.random.seed(seed)
+            if not baseline or len(baseline) != 3:
+                print('Baseline must contain a channel, start time and stop time. ' +
+                      'Okay to continue, use normalized=False when making epochs')
+            meta_data['Events']['Baseline'] = baseline
+
+            meta_data['Time Buffer'] = tbuffer
+
+            meta_data['Seed'] = seed
+
+            if epochs is not None and event is not None:
+                self._save_epochs(epochs,event)
+
+            if fs_subjects_dir is None:
+                print('Please provide the SUBJECTS_DIR specified to freesurfer ' +
+                      'if you want to do source estimation. These files are not ' +
+                      'copied over to save space and to preserve the original ' +
+                      'file identies for clarity and troubleshooting. Pass ' +
+                      'fs_subjects_dir=False to supress this warning')
+                if not os.path.isdir(fs_subjects_dir):
+                    raise ValueError('fs_subjects_dir not a directory')
+            else:
+                meta_data['Freesufer SUBJECTS_DIR'] = fs_subjects_dir
+
+            if bemf is None:
+                if not fs_subjects_dir is None:
+                    print('Please provide the file for a boundary element model if ' +
+                          'you want source estimation, this can be done using a ' +
+                          'FLASH or T1 scan using MNE make_flash_bem or ' +
+                          'make_watershed_bem respectively')
+                meta_data['Boundary Element Model'] = []
+            else:
+                meta_data['Boundary Element Model'] = bemf
+
+            if sourcef is None or not os.path.isfile(sourcef):
+                if not fs_subjects_dir is None:
+                    print('Please provide the file for a source space if ' +
+                          'you want source estimation, this can be done using MNE ' +
+                          'setup_source_space')
+                meta_data['Source Space'] = []
+            else:
+                meta_data['Source Space'] = sourcef
+
+            if coord_transf is None or not os.path.isfile(coord_transf):
+                if not fs_subjects_dir is None:
+                    print('Please provide the file for a coordinate transformation if ' +
+                          'you want source estimation, this can be done using MNE ' +
+                          'seting the SUBJECTS_DIR and SUBJECT environmental variables ' +
+                          'running \'mne_analyze\', loading the subjects surface from ' +
+                          'the recon-all files and the digitization data from the raw file ' +
+                          'and then manually adjusting until the coordinate frames match. ' +
+                          'This can then be saved out as a coordinate transform file.')
+                meta_data['Coordinate Transform'] = []
+            else:
+                meta_data['Coordinate Transform'] = coord_transf
+
+            file = self._fname('meta_data','data','json')
+            with open(meta_name,'w') as f:
+                json.dump(meta_data,f)
+
+        with open(file,'w') as f:
+            meta_data = json.load(f)
+            self.subject = meta_data['Subject']
+            self.fdata = meta_data['Functional Data']
+            self.behavior = meta_data['Behavior']
+            self.events = meta_data['Events']
+            self.eeg = meta_data['EEG']
+            self.meg = meta_data['MEG']
+            self.task = meta_data['Task']
+            self.no_response = meta_data['No Response']
+            self.exclude_response = meta_data['Exclude Response']
+            self.tbuffer = meta_data['Time Buffer']
+            self.subjects_dir = meta_data['Subjects Directory']
+            self.fs_subjects_dir = meta_data['Freesufer SUBJECTS_DIR']
+            self.bemf = meta_data['Boundary Element Model']
+            self.sourcef = meta_data['Source Space']
+            self.coord_transf = meta_data['Coordinate Transform']
+            self.seed = meta_data['Seed']
+
+        return file
+
 
     def preprocess(self,event=None):
         # preprocessing
@@ -190,7 +272,7 @@ class MEEGbuddy:
                 fname += '_' + str(tag)
         fname += '-' + keyword
         if ftype:
-            fname += ftype
+            fname += '.' + ftype
         return fname
 
     def _save_behavior(self,behavior=None):
@@ -2102,17 +2184,18 @@ class MEEGbuddy:
             self._source_setup(fs_dir,bemf,sourcef,coord_transf,event,snr,
                                epochs,bl_epochs)
 
-        if shared_baseline:
-            print('Making inverse for all...')
-            inv = self._generate_inverse(epochs,fwd,bl_epochs,lambda2,method,
-                                         pick_ori)
-            self._save_inverse(inv,lambda2,method,pick_ori,
-                               event,condition,'all',ar,keyword_out)
-            print('Applying inverse on baseline for all...')
-            bl_stc = apply_inverse(bl_evoked,inv,lambda2=lambda2,method=method,
-                                   pick_ori=pick_ori)
-            self._save_source(bl_stc,'Baseline',condition,'all',ar,keyword_out)
-        else:
+        print('Making inverse for all...')
+        inv = self._generate_inverse(epochs,fwd,bl_epochs,lambda2,method,
+                                     pick_ori)
+        self._save_inverse(inv,lambda2,method,pick_ori,
+                           event,condition,'all',ar,keyword_out)
+        print('Applying inverse on baseline for all...')
+        bl_evoked = bl_epochs.average()
+        bl_stc = apply_inverse(bl_evoked,inv,lambda2=lambda2,method=method,
+                               pick_ori=pick_ori)
+        self._save_source(bl_stc,'Baseline',condition,'all',ar,keyword_out)
+
+        if not shared_baseline:
             bl_value_indices = self._get_indices(bl_epochs,condition,values)
         for value in values:
             if not shared_baseline:
@@ -2707,7 +2790,7 @@ class MEEGbuddy:
         tmin,tmax = self._default_t(event,tmin,tmax)
         epochs = self._load_epochs(event,ar=ar,keyword=keyword_in)
         epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
-        epochs = epochs.crop(tmin=min([tmin,bl_tmin]),tmax=max([tmax,bl_tmin]))
+        epochs = epochs.crop(tmin=min([tmin,bl_tmin]),tmax=max([tmax,bl_tmax]))
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=True,verbose=False)
@@ -2718,10 +2801,10 @@ class MEEGbuddy:
                                  np.where(epochs.times<=bl_tmax))
         nTR = min([len(value_indices[value]) for value in value_indices])
 
-        def preprocess(epochs,indices,bl_tind,event,condition,value,nTR,ar,keyword):
+        def preprocess(epochs,indices,bl_tind,event,condition,value,nTR,ar,keyword_in):
             Y = epochs[indices].get_data()
             inv,lambda2,method,pick_ori = \
-                self._load_inverse(event,condition,value,ar=ar,keyword=keyword)
+                self._load_inverse(event,condition,value,ar=ar,keyword=keyword_in)
             nSRC = inv['nsource']
             nTIME = len(epochs.times)
             J = apply_inverse(epochs[indices].average(),inv,
@@ -2792,7 +2875,7 @@ class MEEGbuddy:
                 print('Loading pre-computed bootstraps')
             else:
                 indices = value_indices[value]
-                if downsample:
+                if downsample and not shared_baseline:
                     indices = downsampleIndices(indices,nTR,condition,value)
                 Y,J,inv,lambda2,method,pick_ori,NUM,DEN,Norm = \
                     preprocess(epochs,indices,bl_tind,event,condition,value,
