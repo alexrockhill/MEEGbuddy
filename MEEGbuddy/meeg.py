@@ -113,7 +113,7 @@ class MEEGbuddy:
             if subjects_dir is None:
                 subjects_dir = os.getcwd()
                 print('No subjects_dir supplied defaulting to current working directory')
-            meta_data['Subjects Directory'] = self.subjects_dir = subjects_dir
+            meta_data['Subjects Directory'] = subjects_dir
 
             if fdata is None:
                 raise ValueError('Please supply raw file or list of files to combine')
@@ -121,14 +121,14 @@ class MEEGbuddy:
                 fdata = [fdata]
             meta_data['Functional Data'] = fdata
 
-            meta_data['MEG'] = self.meg = meg
-            meta_data['EEG'] = self.eeg = eeg
+            meta_data['MEG'] = meg
+            meta_data['EEG'] = eeg
 
             if subject is None:
                 raise ValueError('Subject name is required to differentiate subjects')
-            meta_data['Subject'] = self.subject = subject
+            meta_data['Subject'] = subject
 
-            meta_data['Task'] = self.task = task
+            meta_data['Task'] = task
 
             processes = ['meta_data','raw','epochs','source_estimates','plots',
                          'analyses','behavior']
@@ -138,8 +138,8 @@ class MEEGbuddy:
                 meta_data['Process Directories'][process] = \
                     os.path.join(subjects_dir,process,subject)
                 if not os.path.exists(meta_data['Process Directories'][process]):
-                    os.makedirs(meta_data['Process Directories'][process])
-            self.process_dirs = meta_data['Process Directories'] #need now for file naming
+                    if process != 'meta_data':
+                        os.makedirs(meta_data['Process Directories'][process])
 
             meta_data['Behavior'] = behavior
             if meta_data['Behavior']:
@@ -173,9 +173,6 @@ class MEEGbuddy:
             meta_data['Time Buffer'] = tbuffer
 
             meta_data['Seed'] = seed
-
-            if epochs is not None and event is not None:
-                self._save_epochs(epochs,event)
 
             if fs_subjects_dir is None:
                 print('Please provide the SUBJECTS_DIR specified to freesurfer ' +
@@ -220,7 +217,9 @@ class MEEGbuddy:
             else:
                 meta_data['Coordinate Transform'] = coord_transf
 
-            file = self._fname('meta_data','data','json')
+            modality = 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
+            file = os.path.join(subjects_dir,'meta_data',
+                                '%s_%s_%s.json' %(subject,task,modality))
             with open(file,'w') as f:
                 json.dump(meta_data,f)
 
@@ -243,6 +242,9 @@ class MEEGbuddy:
             self.sourcef = meta_data['Source Space']
             self.coord_transf = meta_data['Coordinate Transform']
             self.seed = meta_data['Seed']
+
+        if epochs is not None and event is not None:
+            self._save_epochs(epochs,event)
 
     def preprocess(self,event=None):
         # preprocessing
