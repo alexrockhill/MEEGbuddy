@@ -22,14 +22,12 @@ try:
     from mne.chpi import read_head_pos
     from mne.stats import permutation_cluster_test
 except:
-    print('Unable to load MNE... must install to continue')
+    raise ImportError('Unable to load MNE... must install to continue')
 try:
     import glob,re,json
     import numpy as np
-    from shutil import copyfile
     from tqdm import tqdm
     from pandas import read_csv, DataFrame
-    from functools import partial
     from joblib import Parallel,delayed
     import os
     from .psd_multitaper_plot_tools import ButtonClickProcessor
@@ -41,8 +39,8 @@ try:
     from . import pci
     from .gif_combine import combine_gifs
 except:
-    print('Unable to import core tools (shutil,pandas,glob,re,json,os,scipy,' +
-          'tqdm,joblib,functools,warnings)... must install to continue')
+    raise ImportError('Unable to import core tools (pandas,glob,re,json,os,scipy,' +
+                      'tqdm,joblib,warnings)... must install to continue')
 try:
     from autoreject import AutoReject, compute_thresholds, set_matplotlib_defaults
 except:
@@ -86,12 +84,12 @@ class MEEGbuddy:
     epochs are made, and autoreject is applied.
     All data is saved automatically in BIDS-inspired format.
     '''
-    def __init__(self, file=None, subject=None, fdata=None, behavior=None,
+    def __init__(self, subject=None, session=None, fdata=None, behavior=None,
                  baseline=None, stimuli=None, eeg=False, meg=False,
                  response=None, task=None, no_response=None,
                  exclude_response=None, tbuffer=1, subjects_dir=None,
                  epochs=None, event=None, fs_subjects_dir=None, bemf=None,
-                 sourcef=None, coord_transf=None, seed=551832):
+                 sourcef=None, coord_transf=None, seed=551832, file=None):
         '''
         fdata: one or more .fif files with event triggers and EEG data
         behavior: csv file with variable names indexing a list of attributes
@@ -113,12 +111,15 @@ class MEEGbuddy:
             if subjects_dir is None:
                 subjects_dir = os.getcwd()
                 print('No subjects_dir supplied defaulting to current working directory')
+
             meta_data['Subjects Directory'] = subjects_dir
 
             if fdata is None:
                 raise ValueError('Please supply raw file or list of files to combine')
+
             if not isinstance(fdata,list):
                 fdata = [fdata]
+
             meta_data['Functional Data'] = fdata
 
             meta_data['MEG'] = meg
@@ -126,7 +127,10 @@ class MEEGbuddy:
 
             if subject is None:
                 raise ValueError('Subject name is required to differentiate subjects')
+
             meta_data['Subject'] = subject
+
+            meta_data['Session'] = session
 
             meta_data['Task'] = task
 
@@ -142,19 +146,10 @@ class MEEGbuddy:
                         os.makedirs(meta_data['Process Directories'][process])
 
             meta_data['Behavior'] = behavior
-            if meta_data['Behavior']:
-                meta_data['N'] = len(read_csv(behavior))
 
-            if no_response is None:
-                meta_data['No Response'] = []
-            else:
-                meta_data['No Response'] = no_response
+            meta_data['No Response'] = no_response
 
-            if exclude_response is None:
-                meta_data['Exclude Response'] = []
-            else:
-                meta_data['Exclude Response'] = [trial for trial in exclude_response if
-                                                 trial not in meta_data['No Response']]
+            meta_data['Exclude Response'] = exclude_response
 
             meta_data['Events'] = stimuli
             if any([len(stimuli[event]) != 3 for event in stimuli]):
@@ -163,12 +158,12 @@ class MEEGbuddy:
             if response:
                 if len(response) != 3:
                     raise ValueError('response must contain a channel, start time and stop time.')
-                meta_data['Events']['Response'] = response
+            meta_data['Response'] = response
 
             if not baseline or len(baseline) != 3:
                 print('Baseline must contain a channel, start time and stop time. ' +
                       'Okay to continue, use normalized=False when making epochs')
-            meta_data['Events']['Baseline'] = baseline
+            meta_data['Baseline'] = baseline
 
             meta_data['Time Buffer'] = tbuffer
 
@@ -180,10 +175,10 @@ class MEEGbuddy:
                       'copied over to save space and to preserve the original ' +
                       'file identies for clarity and troubleshooting. Pass ' +
                       'fs_subjects_dir=False to supress this warning')
+            else:
                 if not os.path.isdir(fs_subjects_dir):
                     raise ValueError('fs_subjects_dir not a directory')
-            else:
-                meta_data['Freesufer SUBJECTS_DIR'] = fs_subjects_dir
+            meta_data['Freesufer SUBJECTS_DIR'] = fs_subjects_dir
 
             if bemf is None:
                 if not fs_subjects_dir is None:
@@ -191,18 +186,14 @@ class MEEGbuddy:
                           'you want source estimation, this can be done using a ' +
                           'FLASH or T1 scan using MNE make_flash_bem or ' +
                           'make_watershed_bem respectively')
-                meta_data['Boundary Element Model'] = []
-            else:
-                meta_data['Boundary Element Model'] = bemf
+            meta_data['Boundary Element Model'] = bemf
 
             if sourcef is None:
                 if not fs_subjects_dir is None:
                     print('Please provide the file for a source space if ' +
                           'you want source estimation, this can be done using MNE ' +
                           'setup_source_space')
-                meta_data['Source Space'] = []
-            else:
-                meta_data['Source Space'] = sourcef
+            meta_data['Source Space'] = sourcef
 
             if coord_transf is None:
                 if not fs_subjects_dir is None:
@@ -213,22 +204,27 @@ class MEEGbuddy:
                           'the recon-all files and the digitization data from the raw file ' +
                           'and then manually adjusting until the coordinate frames match. ' +
                           'This can then be saved out as a coordinate transform file.')
-                meta_data['Coordinate Transform'] = []
-            else:
-                meta_data['Coordinate Transform'] = coord_transf
+            meta_data['Coordinate Transform'] = coord_transf
 
-            modality = 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
-            file = os.path.join(subjects_dir,'meta_data',
-                                '%s_%s_%s.json' %(subject,task,modality))
+            name = subject + '_'
+            name += session + '_' if session is not None else ''
+            name += task + '_' if task is not None else ''
+            name += 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
+            file = os.path.join(subjects_dir,'meta_data',name + '.json')
+            if not os.path.isdir(os.path.dirname(file)):
+                os.makedirs(os.path.dirname(file))
             with open(file,'w') as f:
                 json.dump(meta_data,f)
 
         with open(file,'r') as f:
             meta_data = json.load(f)
             self.subject = meta_data['Subject']
+            self.session = meta_data['Session']
             self.fdata = meta_data['Functional Data']
             self.behavior = meta_data['Behavior']
+            self.baseline = meta_data['Baseline']
             self.events = meta_data['Events']
+            self.response = meta_data['Response']
             self.eeg = meta_data['EEG']
             self.meg = meta_data['MEG']
             self.task = meta_data['Task']
@@ -250,7 +246,7 @@ class MEEGbuddy:
         # preprocessing
         self.autoMarkBads()
         self.findICA()
-        for event in self.getEvents():
+        for event in self.events:
             self.makeEpochs(event)
             self.markAutoReject(event)
 
@@ -606,12 +602,6 @@ class MEEGbuddy:
         if show:
             fig.show()
 
-    def getEvents(self,baseline=True):
-        if baseline:
-            return self.events.keys()
-        else:
-            return [event for event in self.events.keys() if event != 'Baseline']
-
     def _save_epochs(self,epochs,event,keyword=None):
         print('Saving epochs for ' + event +
               ' %s' %(keyword)*(keyword is not None))
@@ -893,70 +883,68 @@ class MEEGbuddy:
             return
         raw = self._load_raw(keyword=keyword_in)
 
-        include = [i for i in range(self._get_n()) if
-                   not (i in self.no_response or i in self.exclude_response)]
+        n_events = None
+
+        if self.baseline:
+            ch,tmin,tmax = self.baseline
+            n_events = self._makeEpochs(raw,'Baseline',ch,tmin,tmax,detrend,
+                                        keyword_out,n_events=n_events)
+
         if normalized:
-            # make baseline epochs
-            try:
-                baseline_ch,tmin,tmax = self.events['Baseline']
-            except:
-                raise ValueError('Baseline channel is not defined properly, ' +
-                                 'maybe you meant to use normalized=False')
-            events = find_events(raw,stim_channel=baseline_ch,
-                                 output="onset",verbose=False)
-            events = events[include,:]
-            events[:,2] = include
-
-            bl_epochs = Epochs(raw,events,tmin=tmin-self.tbuffer,
-                               tmax=tmax+self.tbuffer,baseline=None,verbose=False,
-                               detrend=detrend,preload=True)
-            self._save_epochs(bl_epochs,'Baseline',keyword=keyword_out)
-
+            bl_epochs = self._load_epochs('Baseline',keyword=keyword_out)
             baseline_data = bl_epochs.crop(tmin=tmin,tmax=tmax).get_data()
             baseline_arr = baseline_data.mean(axis=2)
 
-        include_response = [i for i in range(self._get_n()) if
-                            i not in self.exclude_response]
-        include_response = include_response[:-len(self.no_response) or None]
-
-        for event in self.getEvents(baseline=False):
-            event_ch,tmin,tmax = self.events[event]
-            events = find_events(raw,stim_channel=event_ch,output="onset",
-                                 verbose=False)
-            print('%s events found: %i' %(event,len(events)))
-
-            expected_length = self._get_n()-(event=='Response')*len(self.no_response)
-            if len(events) != expected_length:
-                raise ValueError('Mismatching # of stimulus presentations ' +
-                                 'found for %s ' %(event) +
-                                  '%s EEG Events ' %(len(events))*self.eeg +
-                                  '%s MEG Events ' %(len(events))*self.meg +
-                                  '%s Behavior Events ' %(expected_length))
-
-            if event == 'Response': #assumes no response if excluded
-                print('No response trials given: %i' %(len(self.no_response)))
-                events = events[include_response,:]
-            else:
-                events = events[include,:]
-
-            events[:,2] = include
-
-            epochs = Epochs(raw,events,tmin=tmin-self.tbuffer,
-                            tmax=tmax+self.tbuffer,proj=False,preload=True,
-                            baseline=None,verbose=False, detrend=detrend,
-                            reject_by_annotation=False)
-            if self.eeg:
-                epochs = epochs.set_eeg_reference(ref_channels='average',
-                                                  projection=False)
+        for event in self.events:
+            ch,tmin,tmax = self.events[event]
+            n_events = self._makeEpochs(raw,event,ch,tmin,tmax,detrend,
+                                        keyword_out,n_events=n_events)
             if normalized:
+                epochs = self._load_epochs(event,keyword=keyword_out)
                 epochs_data = epochs.get_data()
-                info = epochs.info
                 epochs_demeaned_data = np.array([arr - baseline_arr.T
                                                  for arr in epochs_data.T]).T
-                epochs = EpochsArray(epochs_demeaned_data,info,
-                                     events=events,verbose=False,
+                epochs = EpochsArray(epochs_demeaned_data,epochs.info,
+                                     events=epochs.events,verbose=False,
                                      proj=False,tmin=tmin-self.tbuffer)
-            self._save_epochs(epochs,event,keyword=keyword_out)
+        if self.response:
+            ch,tmin,tmax = self.response
+            self._makeEpochs(raw,'Response',ch,tmin,tmax,detrend,keyword_out,
+                             n_events=n_events,response=True)
+
+    def _makeEpochs(self,raw,event,ch,tmin,tmax,detrend,keyword_out,n_events=None,
+                    response=False):
+        try:
+            events = find_events(raw,stim_channel=ch,output="onset",verbose=False)
+        except:
+            raise ValueError('%s channel not found in raw' %(event) +
+                             ', maybe you meant to use normalized=False'*(event=='Baseline'))
+        n_events2 = len(events)
+        print('%s events found: %i' %(event,n_events2))
+        if response:
+            exclude = np.intersect1d(self.no_response,self.exclude_response)
+            diff = len(np.setdiff1d(self.exclude_response,self.no_response))
+            if n_events is not None and n_events2 + diff != n_events:
+                raise ValueError('%i events compared to ' %(n_events) +
+                                 '%i responses + %i excluded responses ' %(n_events2,diff) +
+                                 'doesn\'t add up')
+            events[:,2] = np.setdiff1d(np.arange(n_events2),self.no_response)
+        else:
+            exclude = self.exclude_response
+            if n_events is not None and n_events2 != n_events:
+                raise ValueError('%i events from previous stimuli, ' %(n_events) +
+                                 '%i events from %s' %(n_events2,event))
+            events[:,2] = np.arange(n_events2)
+        events = np.delete(events,exclude,axis=0)
+
+        epochs = Epochs(raw,events,tmin=tmin-self.tbuffer,
+                        tmax=tmax+self.tbuffer,baseline=None,verbose=False,
+                        detrend=detrend,preload=True)
+        if self.eeg:
+            epochs = epochs.set_eeg_reference(ref_channels='average',
+                                              projection=False)
+        self._save_epochs(epochs,event,keyword=keyword_out)
+        return n_events
 
     def demeanEpochs(self,event,condition,values=None,keyword_in=None,
                      keyword_out=None):
@@ -3076,7 +3064,11 @@ class MEEGbuddy:
                               fps=fps,writer='imagemagick',
                               savefig_kwargs={'facecolor':'black'})
 
-def create_demi_events(raw, window_size, shift, epoches_nun=0):
+def create_demi_events(raw_fname, window_size, shift, epoches_nun=0,
+                       fname_out=None, overwrite=False):
+    if fname_out is None and not overwrite:
+        raise ValueError('No out file name specified, use \'overwrite=True\'' +
+                         'to overwrite.')
     windows_length = raw.info['sfreq']*window_size
     windows_shift = raw.info['sfreq']*shift
     import math
@@ -3094,6 +3086,20 @@ def create_demi_events(raw, window_size, shift, epoches_nun=0):
     demi_events[:, :2] += raw.first_samp
     demi_conditions = {'demi': 0}
     return demi_events, demi_conditions
+
+def loadMEEGbuddies(subjects_dir,eeg=None,meg=None,task=None):
+    files = []
+    for mbf in os.listdir(os.path.join(subjects_dir,'meta_data')): #MEEGbuddyfile
+        test = True
+        for kw,use in {'eeg':eeg,'meg':meg}.items():
+            if use is not None and ((use and not kw in mbf) or
+                                    (not use and kw in mbf)):
+                test = False
+        if task is not None and task not in mbf:
+            test = False
+        if test:
+            files.append(os.path.join(subjects_dir,'meta_data',mbf))
+    return [MEEGbuddy(file=f) for f in files]
 
 
 class Comparator:
