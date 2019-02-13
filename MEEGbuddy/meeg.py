@@ -89,7 +89,7 @@ class MEEGbuddy:
                  response=None, task=None, no_response=None,
                  exclude_response=None, tbuffer=1, subjects_dir=None,
                  epochs=None, event=None, fs_subjects_dir=None, bemf=None,
-                 sourcef=None, coord_transf=None, seed=551832, file=None):
+                 srcf=None, transf=None, seed=551832, file=None):
         '''
         fdata: one or more .fif files with event triggers and EEG data
         behavior: csv file with variable names indexing a list of attributes
@@ -188,14 +188,14 @@ class MEEGbuddy:
                           'make_watershed_bem respectively')
             meta_data['Boundary Element Model'] = bemf
 
-            if sourcef is None:
+            if srcf is None:
                 if not fs_subjects_dir is None:
                     print('Please provide the file for a source space if ' +
                           'you want source estimation, this can be done using MNE ' +
                           'setup_source_space')
-            meta_data['Source Space'] = sourcef
+            meta_data['Source Space'] = srcf
 
-            if coord_transf is None:
+            if transf is None:
                 if not fs_subjects_dir is None:
                     print('Please provide the file for a coordinate transformation if ' +
                           'you want source estimation, this can be done using MNE ' +
@@ -204,11 +204,11 @@ class MEEGbuddy:
                           'the recon-all files and the digitization data from the raw file ' +
                           'and then manually adjusting until the coordinate frames match. ' +
                           'This can then be saved out as a coordinate transform file.')
-            meta_data['Coordinate Transform'] = coord_transf
+            meta_data['Coordinate Transform'] = transf
 
-            name = subject + '_'
-            name += session + '_' if session is not None else ''
-            name += task + '_' if task is not None else ''
+            name = str(subject) + '_'
+            name += str(session) + '_' if session is not None else ''
+            name += str(task) + '_' if task is not None else ''
             name += 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
             file = os.path.join(subjects_dir,'meta_data',name + '.json')
             if not os.path.isdir(os.path.dirname(file)):
@@ -235,8 +235,8 @@ class MEEGbuddy:
             self.subjects_dir = meta_data['Subjects Directory']
             self.fs_subjects_dir = meta_data['Freesufer SUBJECTS_DIR']
             self.bemf = meta_data['Boundary Element Model']
-            self.sourcef = meta_data['Source Space']
-            self.coord_transf = meta_data['Coordinate Transform']
+            self.srcf = meta_data['Source Space']
+            self.transf = meta_data['Coordinate Transform']
             self.seed = meta_data['Seed']
 
         if epochs is not None and event is not None:
@@ -257,7 +257,7 @@ class MEEGbuddy:
         else:
             fname = os.path.join(self.process_dirs[process_dir],self.subject)
         if self.task:
-            fname += '_' + self.task
+            fname += '_' + str(self.task)
         if self.eeg:
             fname += '_eeg'
         if self.meg:
@@ -267,7 +267,7 @@ class MEEGbuddy:
                 fname += '_' + str(tag)
         fname += '-' + keyword
         if ftype:
-            fname += '.' + ftype
+            fname += '.' + str(ftype)
         return fname
 
     def _save_behavior(self,behavior):
@@ -805,8 +805,8 @@ class MEEGbuddy:
                  ' to recalculate.')
            return
         raw = self._load_raw(keyword=keyword_in)
+        raw.info['bads'] = []
         data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
-        bads = []
         rawlen = len(raw._data[0])
         for dt in data_types:
             print(dt)
@@ -825,13 +825,12 @@ class MEEGbuddy:
                     if diff_c > reject[dt]:
                         reject_count += 1
                 if flat_count > (seeds * bad_seeds):
-                    bads.append(raw2.ch_names[i])
+                    raw.info['bads'].append(raw2.ch_names[i])
                     print(raw2.ch_names[i] + ' removed: flat')
                 elif reject_count > (seeds * bad_seeds):
-                    bads.append(raw2.ch_names[i])
+                    raw.info['bads'].append(raw2.ch_names[i])
                     print(raw2.ch_names[i] + ' removed: reject')
 
-        raw.info['bads'] = bads
         self._save_raw(raw,keyword=keyword_out)
 
     def closePlots(self):
@@ -887,8 +886,8 @@ class MEEGbuddy:
 
         if self.baseline:
             ch,tmin,tmax = self.baseline
-            n_events = self._makeEpochs(raw,'Baseline',ch,tmin,tmax,detrend,
-                                        keyword_out,n_events=n_events)
+            n_events = self._make_epochs(raw,'Baseline',ch,tmin,tmax,detrend,
+                                         keyword_out,n_events=n_events)
 
         if normalized:
             bl_epochs = self._load_epochs('Baseline',keyword=keyword_out)
@@ -897,8 +896,8 @@ class MEEGbuddy:
 
         for event in self.events:
             ch,tmin,tmax = self.events[event]
-            n_events = self._makeEpochs(raw,event,ch,tmin,tmax,detrend,
-                                        keyword_out,n_events=n_events)
+            n_events = self._make_epochs(raw,event,ch,tmin,tmax,detrend,
+                                         keyword_out,n_events=n_events)
             if normalized:
                 epochs = self._load_epochs(event,keyword=keyword_out)
                 epochs_data = epochs.get_data()
@@ -909,26 +908,33 @@ class MEEGbuddy:
                                      proj=False,tmin=tmin-self.tbuffer)
         if self.response:
             ch,tmin,tmax = self.response
-            self._makeEpochs(raw,'Response',ch,tmin,tmax,detrend,keyword_out,
-                             n_events=n_events,response=True)
+            self._make_epochs(raw,'Response',ch,tmin,tmax,detrend,keyword_out,
+                              n_events=n_events,response=True)
 
-    def _makeEpochs(self,raw,event,ch,tmin,tmax,detrend,keyword_out,n_events=None,
-                    response=False):
+    def _make_epochs(self,raw,event,ch,tmin,tmax,detrend,keyword_out,n_events=None,
+                     response=False):
+        if isinstance(ch,list):
+            ch, event_id = ch  
+        else:
+            event_id = None
         try:
             events = find_events(raw,stim_channel=ch,output="onset",verbose=False)
+            if event_id is not None:
+                events = events[np.where(events[:,2]==event_id)[0]]
         except:
             raise ValueError('%s channel not found in raw' %(event) +
                              ', maybe you meant to use normalized=False'*(event=='Baseline'))
         n_events2 = len(events)
         print('%s events found: %i' %(event,n_events2))
         if response:
-            exclude = np.intersect1d(self.no_response,self.exclude_response)
-            diff = len(np.setdiff1d(self.exclude_response,self.no_response))
-            if n_events is not None and n_events2 + diff != n_events:
+            response_events = np.setdiff1d(np.arange(n_events),self.no_response)
+            exclude = np.intersect1d(response_events,self.exclude_response)
+            if n_events is not None and n_events2 + len(self.no_response) != n_events:
                 raise ValueError('%i events compared to ' %(n_events) +
                                  '%i responses + %i excluded responses ' %(n_events2,diff) +
                                  'doesn\'t add up')
-            events[:,2] = np.setdiff1d(np.arange(n_events2),self.no_response)
+            events[:,2] = response_events
+
         else:
             exclude = self.exclude_response
             if n_events is not None and n_events2 != n_events:
@@ -944,7 +950,7 @@ class MEEGbuddy:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=False)
         self._save_epochs(epochs,event,keyword=keyword_out)
-        return n_events
+        return n_events2
 
     def demeanEpochs(self,event,condition,values=None,keyword_in=None,
                      keyword_out=None):
@@ -2121,7 +2127,7 @@ class MEEGbuddy:
     def epochs2source(self,event,condition,values=None,snr=1.0,
                       keyword_in=None,keyword_out=None,method='dSPM',
                       pick_ori='normal',shared_baseline=False,overwrite=False):
-        if not all([self.fs_dir,self.bemf,self.sourcef,self.coord_transf]):
+        if not all([self.fs_dir,self.bemf,self.srcf,self.transf]):
             raise ValueError('Source estimation parameters not defined, ' +
                              'either add to meta data or redefine MEEGbuddy')
         keyword_out = keyword_in if keyword_out is None else keyword_out
@@ -2180,8 +2186,8 @@ class MEEGbuddy:
         set_config("SUBJECTS_DIR",self.fs_dir,set_env=True)
 
         bem = read_bem_solution(os.path.join(self.fs_dir,self.bemf))
-        source = read_source_spaces(os.path.join(self.fs_dir,self.sourcef))
-        coord_trans = read_trans(os.path.join(self.fs_dir,self.coord_transf))
+        source = read_source_spaces(os.path.join(self.fs_dir,self.srcf))
+        coord_trans = read_trans(os.path.join(self.fs_dir,self.transf))
 
         # Source localization parameters.
         lambda2 = 1.0 / snr ** 2
