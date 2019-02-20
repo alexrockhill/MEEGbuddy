@@ -1,6 +1,11 @@
-""" MEEG Resources for MGH Division of Neurotherapeutics """
+""" MEEG Resources from MGH Division of Neurotherapeutics """
 
-from .meeg import MEEGbuddy,Comparator,create_demi_events,loadMEEGbuddies
+__version__ = '0.0.dev0'
+
+from .MEEGbuddy import (MEEGbuddy,create_demi_events,loadMEEGbuddies,
+                        getMEEGbuddiesBySubject)
+from .MBComparator import MBComparator
 from . import pci
-from .psd_multitaper_plot_tools import DraggableResizeableRectangle,ButtonClickProcessor
-from .gif_combine import combine_gifs
+from .psd_multitaper_plot_tools import (DraggableResizeableRectangle,
+                                        ButtonClickProcessor)
+from . import gif_combine #import combine_gifs
