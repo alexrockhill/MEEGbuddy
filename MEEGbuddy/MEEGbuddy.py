@@ -12,7 +12,7 @@ try:
                      set_log_level, read_trans, read_bem_solution,
                      make_forward_solution, read_epochs, read_source_spaces,
                      BaseEpochs, read_evokeds, EvokedArray, read_labels_from_annot,
-                     Label)
+                     Label,events_from_annotations)
     from mne.utils import set_config
     from mne.time_frequency import (tfr_morlet,tfr_array_morlet,
                                     tfr_array_multitaper,AverageTFR,morlet)
@@ -285,7 +285,7 @@ class MEEGbuddy:
             fname += '_meg'
         for tag in tags:
             if tag:
-                fname += '_' + str(tag)
+                fname += '_' + str(tag).replace(' ','_')
         if not process_dir == 'plots':
             fname += '-' + keyword
         if ftype:
@@ -610,7 +610,8 @@ class MEEGbuddy:
         error_msg = ('%s already exists for %s' %(ftype,event) +
                      ' %s' %(keyword)*(keyword is not None) +
                      ' %s' %(condition)*(condition is not None) +
-                     ' %s' %(' '.join(values)) if values else '' +
+                     (' %s' %(' '.join([str(v) for v in values]))
+                      if values is not None else '') +
                      ', use \'overwrite=True\' to overwrite')
         raise ValueError(error_msg)
 
@@ -1022,7 +1023,7 @@ class MEEGbuddy:
                    normalized=True,overwrite=False):
         if (all([self._has_epochs(event,keyword_out) for event in self.getEvents()])
             and not overwrite):
-            self._overwrite_error('Epochs',event=event,keyword=keyword_out)
+            self._overwrite_error('Epochs',keyword=keyword_out)
         raw = self._load_raw(keyword=keyword_in)
 
         n_events = None
@@ -1062,7 +1063,7 @@ class MEEGbuddy:
         else:
             event_id = None
         try:
-            events = find_events(raw,stim_channel=ch,output="onset",verbose=False)
+            events,_ = events_from_annotations(raw,stim_channel=ch,output="onset",verbose=False)
             if event_id is not None:
                 events = events[np.where(events[:,2]==event_id)[0]]
         except:
@@ -1747,7 +1748,7 @@ class MEEGbuddy:
             ax.axvline(0,color='k')
             ax.set_ylim(vmin,vmax)
             v = epochs_mean[ch]-epochs_mean[ch].mean()
-            lines = ax.plot(times,v,color='k')
+            lines = ax.plot(times,v)
             if not butterfly:
                 ax.fill_between(times,v-epochs_std[ch],v+epochs_std[ch],
                                 color=lines[0].get_color(),alpha=0.5)
@@ -1927,13 +1928,10 @@ class MEEGbuddy:
         t_end = raw.times[int(n_full_windows*N*Fs)]
         n_windows = int((n_full_windows-1) * (N/deltaN)) + 1
 
-        if overwrite:
-            image = None
-        else:
+        if self._has_PSD_image(keyword,ch,N,deltaN,fmin,fmax,NW) and not overwrite:
             image = self._load_PSD_image(keyword,ch,N,deltaN,fmin,fmax,NW)
-
-        if image is None:
-            imsize = int(Fs/2*N) + 1
+        else:
+            imsize = int(np.ceil(Fs/2*N)) + 1
             image = np.zeros((imsize,int(n_full_windows*(N/deltaN))))
             counters = np.zeros((int(n_full_windows*(N/deltaN))))
             with Parallel(n_jobs=n_jobs) as parallel:
@@ -2502,6 +2500,7 @@ class MEEGbuddy:
                                     fps,*gif_names)
                 if show:
                     plt.show()
+            plt.close('all')
 
 
     def interpolateArtifact(self,event,use_raw=True,keyword=None,mode='spline',
