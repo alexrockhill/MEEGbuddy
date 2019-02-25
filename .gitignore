@@ -1,0 +1,14 @@
+*.gif
+MEEGbuddy/scratch.py
+MEEGbuddy/__pycache__
+MEEGbuddyDemo/data/*
+!MEEGbuddyDemo/data/plots/
+*.gif
+!MEEGbuddyDemo/data/plots/sample_AudioVis_eeg_meg_Cue_Stimulus Type_Right Visual_Autoreject_Filtered_both_lat_med_cau_dor_ven_fro_par-source_plot.gif
+MEEGbuddyDemo/.ipynb_checkpoints
+MEEGbuddyDemo/cachedir
+.ipynb_checkpoints
+MEEGbuddy.egg-info
+build/lib/MEEGbuddy
+dist
+

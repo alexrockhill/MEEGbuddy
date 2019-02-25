@@ -46,6 +46,10 @@ except:
     print('Unable to import autoreject... you won\'t be able to use this feature' +
           'unless you install autoreject and its sklearn dependancy')
 try:
+    from . import pci
+except:
+    print('Unable to import pci, you won\'t be able to use this analysis')
+try:
     import matplotlib
     matplotlib.use('TKagg')
     import matplotlib.pyplot as plt
@@ -1016,7 +1020,7 @@ class MEEGbuddy:
 
     def makeEpochs(self,keyword_in=None,keyword_out=None,detrend=0,
                    normalized=True,overwrite=False):
-        if (all([self._has_epochs(event,keyword_out) for event in self.events])
+        if (all([self._has_epochs(event,keyword_out) for event in self.getEvents()])
             and not overwrite):
             self._overwrite_error('Epochs',event=event,keyword=keyword_out)
         raw = self._load_raw(keyword=keyword_in)
@@ -1663,48 +1667,52 @@ class MEEGbuddy:
         epochs = self._load_epochs(event,keyword=keyword)
         values = self._default_values(values,condition,contrast)
         value_indices = self._get_indices(epochs,condition,values)
-        ch_dict = self._get_ch_dict(epochs,aux=aux)
-        fig,axs = self._setup_plot(ch_dict,butterfly=butterfly,values=values)
         tmin,tmax = self._default_t(event,tmin,tmax)
         times = self._get_times(epochs,event,tmin=tmin,tmax=tmax)
-        if tfr:
-            tind = np.array([i for i,t in enumerate(times) if
-                             t >= tmin and t<=tmax])
-            values_dict,frequencies = \
-                self._get_tfr_data(event,condition,values,tfr_keyword,
-                                   value_indices,tind,band=band)
-        else:
-            values_dict = self._get_data(epochs,values,value_indices,tmin,tmax)
-            frequencies = None
-        if contrast:
-            epochs_mean0,epochs_std0 = values_dict[values[0]]
-            epochs_mean1,epochs_std1 = values_dict[values[1]]
-            epochs_std = np.sqrt(epochs_std0**2 + epochs_std1**2)
-            epochs_mean = epochs_mean1-epochs_mean0
-            self._plot_decider(epochs_mean,epochs_std,times,axs,fig,butterfly,
-                               contrast,values,ch_dict,tfr,band,frequencies,
-                               vmin,vmax)
-        else:
-            for i,value in enumerate(values):
-                epochs_mean,epochs_std = values_dict[value]
-                if butterfly:
-                    axs[i].set_title(value)
-                    self._plot_decider(epochs_mean,epochs_std,times,axs[i],fig,
-                                       butterfly,contrast,values,ch_dict,tfr,
-                                       band,frequencies,vmin,vmax)
-                else:
-                    self._plot_decider(epochs_mean,epochs_std,times,axs,fig,
-                                       butterfly,contrast,values,ch_dict,tfr,
-                                       band,frequencies,vmin,vmax)
-        if not (heatmap or butterfly):
-            if contrast:
-                self._add_last_square_legend(fig,'%s-%s' %(values[0],values[1]))
+        kws = ['grad','mag']*self.meg + ['eeg']*self.eeg
+        for kw in kws:
+            epo = epochs.copy().pick_types(meg=kw if kw != 'eeg' else False,
+                                           eeg=True if kw == 'eeg' else False)
+            ch_dict = self._get_ch_dict(epo,aux=aux)
+            fig,axs = self._setup_plot(ch_dict,butterfly=butterfly,values=values)
+            if tfr:
+                tind = np.array([i for i,t in enumerate(times) if
+                                 t >= tmin and t<=tmax])
+                values_dict,frequencies = \
+                    self._get_tfr_data(event,condition,values,tfr_keyword,
+                                       value_indices,tind,band=band,kw=kw)
             else:
-                self._add_last_square_legend(fig,*values)
+                values_dict = self._get_data(epo,values,value_indices,tmin,tmax)
+                frequencies = None
+            if contrast:
+                epochs_mean0,epochs_std0 = values_dict[values[0]]
+                epochs_mean1,epochs_std1 = values_dict[values[1]]
+                epochs_std = np.sqrt(epochs_std0**2 + epochs_std1**2)
+                epochs_mean = epochs_mean1-epochs_mean0
+                self._plot_decider(epochs_mean,epochs_std,times,axs,fig,butterfly,
+                                   contrast,values,ch_dict,tfr,band,frequencies,
+                                   vmin,vmax)
+            else:
+                for i,value in enumerate(values):
+                    epochs_mean,epochs_std = values_dict[value]
+                    if butterfly:
+                        axs[i].set_title(value)
+                        self._plot_decider(epochs_mean,epochs_std,times,axs[i],fig,
+                                           butterfly,contrast,values,ch_dict,tfr,
+                                           band,frequencies,vmin,vmax)
+                    else:
+                        self._plot_decider(epochs_mean,epochs_std,times,axs,fig,
+                                           butterfly,contrast,values,ch_dict,tfr,
+                                           band,frequencies,vmin,vmax)
+            if not (heatmap or butterfly):
+                if contrast:
+                    self._add_last_square_legend(fig,'%s-%s' %(values[0],values[1]))
+                else:
+                    self._add_last_square_legend(fig,*values)
 
-        self._prepare_fig(fig,event,condition,values,aux=aux,butterfly=butterfly,
-                          contrast=contrast,tfr=tfr,band=band,keyword=keyword,
-                          show=show)
+            self._prepare_fig(fig,event,condition,values,aux=aux,butterfly=butterfly,
+                              contrast=contrast,tfr=tfr,band=band,keyword=keyword,
+                              kw=kw,show=show)
 
 
     def _plot_decider(self,epochs_mean,epochs_std,times,axs,fig,butterfly,
@@ -1730,10 +1738,6 @@ class MEEGbuddy:
 
     def _plot_voltage(self,epochs_mean,epochs_std,times,axs,butterfly,ch_dict,
                       vmin,vmax,clusters=None,cluster_p_values=None):
-        epochs_mean *= 1e6
-        epochs_std *= 1e6
-        vmin *= 1e6
-        vmax *= 1e6
         for i,ch in enumerate(ch_dict):
             if butterfly:
                 ax = axs
@@ -1824,7 +1828,7 @@ class MEEGbuddy:
 
     def _prepare_fig(self,fig,event,condition,values,aux=False,
                      butterfly=False,contrast=False,tfr=False,band=None,
-                     keyword=None,show=True):
+                     keyword=None,kw=None,show=True):
         if tfr:
             if band:
                 ylabel = 'Relative Abundance'
@@ -1835,7 +1839,7 @@ class MEEGbuddy:
         fig.text(0.02, 0.5, ylabel, va='center', rotation='vertical')
         fig.text(0.5, 0.02, 'Time (s)', ha='center')
         fig.set_size_inches(20,15)
-        title = (event + ' ' + condition + ' ' +
+        title = (kw + ' ' + event + ' ' + condition + ' ' +
                  ' '.join([str(value) for value in values]) +
                  ' contrast'*contrast)
         if tfr and band:
@@ -1847,7 +1851,7 @@ class MEEGbuddy:
         fig.savefig(self._fname('plots','plot','jpg',contrast*'contrast',
                                 'tfr'*tfr,'aux'*aux,'butterfly'*butterfly,
                                 (bandname + '_band')*(band is not None),
-                                keyword,event,condition,*values))
+                                keyword,kw,event,condition,*values))
         self._show_fig(fig,show)
 
 
@@ -3029,7 +3033,7 @@ class MEEGbuddy:
         for value in ['all'] if shared_baseline else values:
             ''' Use separate baselines to threshold for significance because
             what is significant for sleep may not be for wake ect'''
-            if (os.path.isfile(self._fname('analyses','phi_threshold','npz',
+            if (os.path.isfile(self._fname('analyses','Threshold','npz',
                                            keyword_out,event,condition,value))
                 and not recalculate_baseline):
                 print('Loading pre-computed bootstraps')
@@ -3071,9 +3075,9 @@ class MEEGbuddy:
 
 
     def _load_noreun_baseline(self,event,condition,value,keyword=None):
-        fname = self._fname('noreun_phi','Threshold','npz',keyword,
+        fname = self._fname('analyses','Threshold','npz',keyword,
                             event,condition,value)
-        if os.path.isfile(fname):
+        if op.isfile(fname):
             f = np.load(fname)
             try:
                 return (f['Y'],f['J'],f['Threshold'],f['events'],f['bl_tmin'].item(),
@@ -3082,14 +3086,14 @@ class MEEGbuddy:
                 return (f['Y'],f['J'],f['Threshold'],f['bl_tmin'].item(),
                         f['bl_tmax'].item(),f['Nboot'].item(),f['alpha'].item())
         else:
-            raise ValueError('Threshold not computed for %s %s %s %s %s'
+            raise ValueError('Threshold not computed for %s %s %s %s'
                              %(event,condition,value,
                                keyword if keyword is not None else ''))
 
 
     def _save_noreun_baseline(self,Y,J,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha,
                               event,condition,value,keyword=None):
-        fname = self._fname('analyses','phi_threshold','npz',keyword,
+        fname = self._fname('analyses','Threshold','npz',keyword,
                             event,condition,value)
         np.savez_compressed(fname,Y=Y,J=J,Threshold=Threshold,bl_tmin=bl_tmin,
                             bl_tmax=bl_tmax,events=events,Nboot=Nboot,
@@ -3097,7 +3101,7 @@ class MEEGbuddy:
 
 
     def _load_noreun_PCI(self,event,condition,value,keyword=None):
-        fname = self._fname('noreun_phi','pci','npz',keyword,
+        fname = self._fname('analyses','pci','npz',keyword,
                             event,condition,value)
         if os.path.isfile(fname):
             print('Loading PCI for %s %s %s' %(event,condition,value))
