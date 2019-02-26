@@ -95,7 +95,7 @@ class MEEGbuddy:
     def __init__(self, subject=None, session=None, fdata=None, behavior=None,
                  baseline=None, stimuli=None, eeg=False, meg=False,
                  response=None, task=None, no_response=None,
-                 exclude_response=None, tbuffer=1, subjects_dir=None,
+                 exclude_response=None, tbuffer=0.25, subjects_dir=None,
                  epochs=None, event=None, fs_subjects_dir=None, bemf=None,
                  srcf=None, transf=None, preload=True, seed=551832, file=None):
         '''
@@ -637,9 +637,9 @@ class MEEGbuddy:
             self.makeEpochs(event)
             self.markAutoReject(event)
 
-    def getEvents(self):
+    def getEvents(self,baseline=True):
         return (list(self.events.keys()) + ['Response']*(self.response is not None) +
-                ['Baseline']*(self.baseline is not None))
+                ['Baseline']*(self.baseline is not None and baseline))
 
     def _default_aux(self,inst,eogs,ecgs):
         if eogs is None:
@@ -962,13 +962,13 @@ class MEEGbuddy:
         plt.close('all')
 
 
-    def plotRaw(self,n_per_screen=20,scalings=None,keyword=None,
-                l_freq=0.5,h_freq=40,overwrite=False):
-        if (os.path.isfile(self._fname('raw','raw','fif',keyword))
+    def plotRaw(self,n_per_screen=20,scalings=None,keyword_in=None,
+                keyword_out=None,l_freq=0.5,h_freq=40,overwrite=False):
+        if (os.path.isfile(self._fname('raw','raw','fif',keyword_out))
             and not overwrite):
             print('Use \'overwrite = True\' to overwrite')
             return
-        raw = self._load_raw(keyword=keyword)
+        raw = self._load_raw(keyword=keyword_in)
         bads_ind = [raw.info['ch_names'].index(ch) for ch in raw.info['bads']]
         this_chs_ind = list(pick_types(raw.info,meg=self.meg,eeg=self.eeg)) + bads_ind
         aux_chs_ind = list(pick_types(raw.info,meg=False,eog=True,ecg=True))
@@ -987,7 +987,7 @@ class MEEGbuddy:
                   title="%s Bad Channel Selection" % self.subject, order=order,
                   scalings=scalings)
         raw.info['bads'] = raw2.info['bads']
-        self._save_raw(raw,keyword=keyword)
+        self._save_raw(raw,keyword=keyword_out)
 
 
     def interpolateBads(self,event=None,keyword_in=None,keyword_out=None):
@@ -1055,6 +1055,18 @@ class MEEGbuddy:
             self._make_epochs(raw,'Response',ch,tmin,tmax,detrend,keyword_out,
                               n_events=n_events,response=True)
 
+    def _find_events(self,raw,ch,event_id=None): #backward compatible 
+        try:
+            events = find_events(raw,stim_channel=ch,output="onset",verbose=False)
+            if event_id is not None:
+                events = events[np.where(events[:,2]==event_id)[0]]
+        except:
+            events,event_id2 = events_from_annotations(raw)
+            if event_id is None:
+                events = events[np.where(events[:,2]==event_id2[stim_ch])[0]]
+            else:
+                events = events[np.where(events[:,2]==event_id)[0]]
+        return events
 
     def _make_epochs(self,raw,event,ch,tmin,tmax,detrend,keyword_out,n_events=None,
                      response=False):
@@ -1063,9 +1075,7 @@ class MEEGbuddy:
         else:
             event_id = None
         try:
-            events,_ = events_from_annotations(raw,stim_channel=ch,output="onset",verbose=False)
-            if event_id is not None:
-                events = events[np.where(events[:,2]==event_id)[0]]
+            self._find_events(raw,ch,event_id=event_id)
         except:
             raise ValueError('%s channel not found in raw' %(event) +
                              ', maybe you meant to use normalized=False'*(event=='Baseline'))
@@ -1647,9 +1657,19 @@ class MEEGbuddy:
         unassigned events for dropped epochs in case dropped epochs need
         a designation for whatever reason'''
         raw = self._load_raw()
-        stim_ch,_,_ = self.events[event]
-        events = find_events(raw,stim_ch,output='onset')
+        stim_ch = self._get_stim_ch(event)
+        events = self._find_events(raw,stim_ch)
         return raw.times[events[:,0]]
+
+
+    def _get_stim_ch(self,event):
+        if event == 'Response':
+            stim_ch,_,_ = self.response
+        elif event == 'Baseline':
+            stim_ch,_,_ = self.baseline
+        else:
+            stim_ch,_,_ = self.events[event]
+        return stim_ch
 
 
     def _add_last_square_legend(self,fig,*labels):
@@ -1931,13 +1951,12 @@ class MEEGbuddy:
         if self._has_PSD_image(keyword,ch,N,deltaN,fmin,fmax,NW) and not overwrite:
             image = self._load_PSD_image(keyword,ch,N,deltaN,fmin,fmax,NW)
         else:
-            imsize = int(np.ceil(Fs/2*N)) + 1
+            imsize = int(Fs/2*N) + 1
             image = np.zeros((imsize,int(n_full_windows*(N/deltaN))))
             counters = np.zeros((int(n_full_windows*(N/deltaN))))
             with Parallel(n_jobs=n_jobs) as parallel:
                 results = parallel(delayed(tsa.multi_taper_psd)(
-                            raw_data[int(round(i*deltaN*Fs)):
-                                     int(round((i*deltaN+N)*Fs))],
+                            raw_data[int(i*deltaN*Fs):int(i*deltaN*Fs)+int(N*Fs)],
                             Fs=Fs,NW=NW,BW=BW,adaptive=adaptive,
                             jackknife=jackknife,low_bias=low_bias)
                                     for i in tqdm(range(n_windows)))
@@ -2383,7 +2402,7 @@ class MEEGbuddy:
         # Source localization parameters.
         lambda2 = 1.0 / snr ** 2
 
-        _,tmin,tmax = self.events[event]
+        tmin,tmax = self._default_t(event,tmin=None,tmax=None,buffered=True)
         epochs = epochs.crop(tmin=tmin,tmax=tmax)
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
@@ -2512,7 +2531,7 @@ class MEEGbuddy:
         stim_ch,_,_ = self.events[event]
         if use_raw:
             inst = self._load_raw(keyword=keyword)
-            events = find_events(inst,stim_channel=stim_ch,output='onset')
+            events = self._find_events(inst,stim_ch)
         else:
             inst = self._load_epochs(event,keyword=keyword)
             events = None
@@ -3311,6 +3330,18 @@ def create_demi_events(raw_fname, window_size, shift, epoches_nun=0,
     demi_events[:, :2] += raw.first_samp
     demi_conditions = {'demi': 0}
     return demi_events, demi_conditions
+
+def loadMEEGbuddy(subjects_dir,subject,session=None,task=None,
+                  eeg=True,meg=True):
+    name = str(subject) + '_'
+    name += str(session) + '_' if session is not None else ''
+    name += str(task) + '_' if task is not None else ''
+    name += 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
+    file = op.join(subjects_dir,'meta_data',name + '.json')
+    if op.isfile(file):
+        return MEEGbuddy(file=file)
+    else:
+        raise ValueError('%s file not found' %(file))
 
 def loadMEEGbuddies(subjects_dir,meg=None,eeg=None,task=None,shuffled=False,
                     seed=11):
