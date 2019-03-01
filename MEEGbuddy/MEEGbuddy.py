@@ -116,6 +116,14 @@ class MEEGbuddy:
         if file is None:
             meta_data = {}
 
+            name = str(subject) + '_'
+            name += str(session) + '_' if session is not None else ''
+            name += str(task) + '_' if task is not None else ''
+            name += 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
+            file = os.path.join(subjects_dir,'meta_data',name + '.json')
+            if not os.path.isdir(os.path.dirname(file)):
+                os.makedirs(os.path.dirname(file))
+
             if subjects_dir is None:
                 subjects_dir = os.getcwd()
                 print('No subjects_dir supplied defaulting to current working directory')
@@ -156,13 +164,19 @@ class MEEGbuddy:
                     not op.isdir(op.join(subjects_dir,process,subject,session))):
                         os.makedirs(op.join(subjects_dir,process,subject,session))
 
-            meta_data['Behavior'] = behavior
 
-            if behavior is not None:
+            if behavior is None:
+                behavior = (op.join(meta_data['Process Directories']['behavior'],
+                                    subject,name+'.csv') if session is None else
+                            op.join(meta_data['Process Directories']['behavior'],
+                                    subject,session,name + '.csv'))
+            else:
                 try:
                     df = read_csv(behavior)
                 except:
                     raise ValueError('Behavior must be the path to a csv file')
+            
+            meta_data['Behavior'] = behavior
 
             meta_data['No Response'] = \
                 [] if no_response is None else no_response
@@ -227,13 +241,6 @@ class MEEGbuddy:
                           'This can then be saved out as a coordinate transform file.')
             meta_data['Coordinate Transform'] = transf
 
-            name = str(subject) + '_'
-            name += str(session) + '_' if session is not None else ''
-            name += str(task) + '_' if task is not None else ''
-            name += 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
-            file = os.path.join(subjects_dir,'meta_data',name + '.json')
-            if not os.path.isdir(os.path.dirname(file)):
-                os.makedirs(os.path.dirname(file))
             with open(file,'w') as f:
                 json.dump(meta_data,f)
 
@@ -260,22 +267,28 @@ class MEEGbuddy:
             self.transf = meta_data['Coordinate Transform']
             self.preload = meta_data['Preload']
             self.seed = meta_data['Seed']
+            self.file = file
 
         if epochs is not None and event is not None:
-            self._save_epochs(epochs,event)
+            epochs.save(self._fname('epochs','epo','fif',event))
 
 
     def _fname(self,process_dir,keyword,ftype,*tags):
         # must give process dir, any tags
         if process_dir == 'plots':
             dirname = op.join(self.process_dirs[process_dir],keyword)
-            if not os.path.isdir(dirname):
-                os.makedirs(dirname)
+        elif process_dir == 'analyses':
+            dirname = op.join(self.process_dirs[process_dir],self.subject)
+            if self.session is not None:
+                dirname = op.join(dirname,self.session)
+            dirname = op.join(dirname,keyword)
         else:
             dirname = (op.join(self.process_dirs[process_dir],self.subject) if
                      self.session is None else
                      op.join(self.process_dirs[process_dir],self.subject,
                              self.session))
+        if not os.path.isdir(dirname):
+            os.makedirs(dirname)
         fname = self.subject
         if self.task:
             fname += '_' + str(self.task)
@@ -298,14 +311,11 @@ class MEEGbuddy:
 
 
     def _load_raw(self,keyword=None):
-        if op.isfile(self._fname('raw','raw','fif',keyword)):
-            raw = Raw(self._fname('raw','raw','fif',keyword),
-                                  verbose=False,preload=True)
-            print('%s' %(keyword)*(keyword is not None)+' raw data loaded.')
-        elif keyword is None:
+        if keyword is None:
             preload = self.preload if self.preload else op.join(self.subjects_dir,
                                                                 'workfile')
             f = self.fdata[0]
+            print('Loading Raw file(s)')
             print(f)
             raw = Raw(f, preload=preload, verbose=False)
             raw.info['bads'] = []
@@ -318,40 +328,52 @@ class MEEGbuddy:
                 raw = raw.set_eeg_reference(ref_channels=[],projection=False)
             raw = raw.pick_types(meg=self.meg,eeg=self.eeg,stim=True,
                                  eog=True,ecg=True,emg=True)
+        elif op.isfile(self._fname('raw','raw','fif',keyword)):
+            raw = Raw(self._fname('raw','raw','fif',keyword),
+                                  verbose=False,preload=True)
+            self._file_loaded('Raw',keyword=keyword)
         else:
-            raise ValueError('No raw data file found ' +
-                             'for %s' %(keyword)*(keyword is not None))
+            self._no_file_error('Raw',keyword=keyword)
         return raw
 
 
     def _save_raw(self,raw,keyword=None):
-        print('Saving raw' + ' %s' %(keyword)*(keyword is not None))
+        if keyword is None:
+            raise ValueError('Keyword required for raw data ' + 
+                             'We don\'t want to save over the original data')
+        self._file_saved('Raw',keyword=keyword)
         raw.save(self._fname('raw','raw','fif',keyword),
                  verbose=False,overwrite=True)
 
 
-    def _has_ICA(self,event=None,keyword=None):
+    def _has_ICA(self,event=None,keyword=None,data_type=None):
         if event is None:
-            return op.isfile(self._fname('raw','ica','fif',keyword))
+            return op.isfile(self._fname('raw','ica','fif',
+                                         data_type,keyword))
         else:
-            return op.isfile(self._fname('epochs','ica','fif',keyword,event))
+            return op.isfile(self._fname('epochs','ica','fif',
+                                         data_type,keyword,event))
 
-    def _load_ICA(self,event=None,keyword=None):
+    def _load_ICA(self,event=None,keyword=None,data_type=None):
         if event is None:
-            fname = self._fname('raw','ica','fif',keyword)
+            fname = self._fname('raw','ica','fif',
+                                data_type,keyword)
         else:
-            fname = self._fname('epochs','ica','fif',keyword,event)
+            fname = self._fname('epochs','ica','fif',
+                                data_type,keyword,event)
         if op.isfile(fname):
             ica = read_ica(fname)
-            print('ICA loaded.')
+            self._file_loaded('ICA',event=event,data_type=data_type,
+                              keyword=keyword)
             return ica
         else:
-            print('No ICA data file found %s'
-                    %(keyword if keyword is not None else ''))
+            self._no_file_error('ICA',event=event,data_type=data_type,
+                                keyword=keyword)
 
 
-    def _save_ICA(self,ica,event=None,keyword=None):
-        print('Saving ICA %s' %(keyword if keyword is not None else ''))
+    def _save_ICA(self,ica,event=None,keyword=None,data_type=None):
+        self._file_saved('ICA',event=event,data_type=data_type,
+                         keyword=keyword)
         if event is None:
             ica.save(self._fname('raw','ica','fif',keyword))
         else:
@@ -363,42 +385,45 @@ class MEEGbuddy:
 
 
     def _load_epochs(self,event,keyword=None):
-        if not self._has_epochs(event,keyword=None):
-            raise ValueError(event + ' epochs must be made first' +
-                             ' for %s' %(keyword)*(keyword is not None))
+        if not self._has_epochs(event,keyword=keyword):
+            self._no_file_error('Epochs',event=event,keyword=keyword)
         epochs = read_epochs(self._fname('epochs','epo','fif',event,keyword),
                              verbose=False,preload=True)
-        print('%s epochs loaded' %(event) +
-              ' for %s' %(keyword)*(keyword is not None))
+        self._file_loaded('Epochs',event=event,keyword=keyword)
         epochs._data = epochs._data.astype('float64') # mne bug work-around
         return epochs
 
 
     def _save_epochs(self,epochs,event,keyword=None):
-        print('Saving epochs for ' + event +
-              ' %s' %(keyword)*(keyword is not None))
+        if keyword is None:
+            raise ValueError('Keyword required for epochs data ' + 
+                             'We don\'t want to save over the original data')
+        self._file_saved('Epochs',event=event,keyword=keyword)
         epochs.save(self._fname('epochs','epo','fif',event,keyword))
 
 
-    def _has_evoked(self,event,keyword=None):
-        return op.isfile(self._fname('epochs','ave','fif',event,keyword))
+    def _has_evoked(self,event,data_type=None,keyword=None):
+        return op.isfile(self._fname('epochs','ave','fif',
+                                     event,data_type,keyword))
 
 
-    def _load_evoked(self,event,keyword=None):
-        if not self._has_evoked(event,keyword=keyword):
-            raise ValueError(event + ' evoked must be made first' +
-                             ' for %s' %(keyword)*(keyword is not None))
-        evoked = read_evokeds(self._fname('epochs','ave','fif',event,keyword),
+    def _load_evoked(self,event,data_type=None,keyword=None):
+        if not self._has_evoked(event,data_type=data_type,keyword=keyword):
+            self._no_file_error('Evoked',event=event,data_type=data_type,
+                                keyword=keyword)
+        evoked = read_evokeds(self._fname('epochs','ave','fif',event,
+                                          data_type,keyword),
                               verbose=False)
-        print('%s evoked loaded' %(event) +
-              ' for %s' %(keyword)*(keyword is not None))
+        self._file_loaded('Evoked',event=event,data_type=data_type,
+                          keyword=keyword)
         return evoked[0]
 
 
-    def _save_evoked(self,evoked,event,keyword=None):
-        print('Saving evoked for ' + event +
-              ' %s' %(keyword)*(keyword is not None))
-        evoked.save(self._fname('epochs','ave','fif',event,keyword))
+    def _save_evoked(self,evoked,event,data_type=None,keyword=None):
+        self._file_saved('Evoked',event=event,data_type=data_type,
+                          keyword=keyword)
+        evoked.save(self._fname('epochs','ave','fif',event,
+                                data_type,keyword))
 
 
     def _has_autoreject(self,event):
@@ -413,24 +438,36 @@ class MEEGbuddy:
             print('Autoreject must be run for ' + event)
 
     def _save_autoreject(self,event,ar,reject_log):
-        np.savez_compressed(self._fname('epochs','ar','npz',event),ar=ar,
-                            reject_log=reject_log)
+        np.savez_compressed(self._fname('epochs','ar','npz',event),
+                            ar=ar,reject_log=reject_log)
 
 
-    def _has_TFR(self,event,condition,value,keyword=None):
-        fname = self._fname('analyses','tfr','npy',event,condition,value,keyword)
-        fname1b = self._fname('analyses','tfr_params','npz',event,condition,value,
-                             keyword)
-        fname2 = self._fname('analyses','tfr','npz',event,condition,value,keyword)
+    def _has_TFR(self,event,condition,value,
+                 data_type=None,keyword=None):
+        fname = self._fname('analyses','tfr','npy',
+                            event,condition,value,
+                            data_type,keyword)
+        fname1b = self._fname('analyses','tfr_params','npz',
+                              event,condition,value,
+                              data_type,keyword)
+        fname2 = self._fname('analyses','tfr','npz',
+                             event,condition,value,
+                             data_type,keyword)
         return ((op.isfile(fname) and op.isfile(fname1b)) or
                  op.isfile(fname2))
 
 
-    def _load_TFR(self,event,condition,value,keyword=None):
-       fname = self._fname('analyses','tfr','npy',event,condition,value,keyword)
-       fname1b = self._fname('analyses','tfr_params','npz',event,condition,value,
-                             keyword)
-       fname2 = self._fname('analyses','tfr','npz',event,condition,value,keyword)
+    def _load_TFR(self,event,condition,value,
+                  data_type=None,keyword=None):
+       fname = self._fname('analyses','tfr','npy',
+                           event,condition,value,
+                           data_type,keyword)
+       fname1b = self._fname('analyses','tfr_params','npz',
+                             event,condition,value,
+                             data_type,keyword)
+       fname2 = self._fname('analyses','tfr','npz',
+                            event,condition,value,
+                            data_type,keyword)
        if op.isfile(fname) and op.isfile(fname1b):
            tfr = np.load(fname)
            f = np.load(fname1b)
@@ -439,49 +476,56 @@ class MEEGbuddy:
            f = np.load(fname2)
            tfr,frequencies,n_cycles = f['tfr'],f['frequencies'],f['n_cycles']
        else:
-           raise ValueError('No TFR to load for %s %s %s'
-                            %(event,condition,value))
-       print('TFR loaded for %s %s %s' %(event,condition,value))
+           self._no_file_error('TFR',event,condition,value,
+                               data_type=data_type,keyword=keyword)
+       self._file_loaded('TFR',event,condition,value,
+                         data_type=data_type,keyword=keyword)
        return tfr,frequencies,n_cycles
 
 
     def _save_TFR(self,tfr,frequencies,n_cycles,
-                 event,condition,value,keyword,compressed=True):
-       print('Saving TFR for %s %s %s' %(event,condition,value))
+                  event,condition,value,
+                  data_type=None,keyword=None,compressed=True):
+       self._file_saved('TFR',event,condition,value,
+                         data_type=data_type,keyword=keyword)
        if compressed:
            np.savez_compressed(self._fname('analyses','tfr','npz',
-                                           event,condition,value,keyword),
+                                           event,condition,value,
+                                           data_type,keyword),
                                tfr=tfr,frequencies=frequencies,
                                n_cycles=n_cycles)
        else:
            np.save(self._fname('analyses','tfr','npy',
-                               event,condition,value,keyword),tfr)
+                               event,condition,value,
+                               data_type,keyword),tfr)
            np.savez_compressed(self._fname('analyses','tfr_params','npz',
-                                           event,condition,value,keyword),
+                                           event,condition,value,
+                                           data_type,keyword),
                                frequencies=frequencies,n_cycles=n_cycles)
 
 
-    def _CPT_decider(self,event,condition,value,tfr=False,band=None):
-        if band:
-            fname = self._fname('analyses','CPT','npz',event,condition,value,band)
-        elif tfr:
-            fname = self._fname('analyses','CPT','npz',event,condition,value,'tfr')
-        else:
-            fname = self._fname('analyses','CPT','npz',event,condition,value)
-        return fname
+    def _has_CPT(self,event,condition,value,
+                 data_type=None,keyword=None,
+                 tfr=False,band=None):
+        return op.isfile(self._fname('analyses','CPT','npz',
+                         event,condition,value,
+                         data_type,keyword,band,
+                         'tfr' if tfr else None))
 
 
-    def _has_CPT(self,event,condition,value,tfr=False,band=None):
-        return op.isfile(_CPT_decider(self,event,condition,value,tfr=tfr,
-                                                band=band))
-
-
-    def _load_CPT(self,event,condition,value,tfr=False,band=None):
-        if self._has_CPT(event,condition,value,tfr=tfr,band=band):
-            f = np.load(_CPT_decider(self,event,condition,value,tfr=tfr,
-                                          band=band))
-            print('Cluster permuation test loaded for %s %s %s'
-                  %(event,condition,value))
+    def _load_CPT(self,event,condition,value,
+                  data_type=None,keyword=None,
+                  tfr=False,band=None):
+        if self._has_CPT(event,condition,value,
+                         data_type=data_type,keyword=keyword,
+                         tfr=tfr,band=band):
+            f = np.load(self._fname('analyses','CPT','npz',
+                        event,condition,value,
+                        data_type,keyword,band,
+                        'tfr' if tfr else None))
+            self._file_loaded('Cluster Permutation Test',band,tfr,
+                              event=event,condition=condition,value=value,
+                              data_type=data_type,keyword=keyword)
             if band:
                 return f['clusters'],f['cluster_p_values'],f['band']
             elif tfr:
@@ -489,28 +533,24 @@ class MEEGbuddy:
             else:
                 return f['clusters'],f['cluster_p_values']
         else:
-            raise ValueError('Cluster permuation test not found for %s %s %s'
-                             %(event,condition,value))
+            self._no_file_error('Cluster Permutation Test',band,tfr,
+                                event=event,condition=condition,value=value,
+                                data_type=data_type,keyword=keyword)
 
 
     def _save_CPT(self,event,condition,value,clusters,cluster_p_values,
                   times,frequencies=None,band=None):
-        print('Saving CPT for %s %s %s' %(event,condition,value))
-        if band:
-            np.savez_compressed(self._fname('analyses','CPT','npz',
-                                       event,condition,value,band),
-                                clusters=clusters,
-                                cluster_p_values=cluster_p_values,band=band)
-        elif frequencies:
-            np.savez_compressed(self._fname('analyses','CPT','npz',
-                                       event,condition,value,'tfr'),
-                                clusters=clusters,frequencies=frequencies,
-                                cluster_p_values=cluster_p_values)
-        else:
-            np.savez_compressed(self._fname('analyses','CPT','npz',
-                                       event,condition,value),
-                                clusters=clusters,
-                                cluster_p_values=cluster_p_values)
+        self._file_saved('Cluster Permutation Test',band,tfr,
+                         event=event,condition=condition,value=value,
+                         data_type=data_type,keyword=keyword)
+        fname = self._fname('analyses','CPT','npz',event,condition,value,
+                            data_type,keyword,band,'tfr' if tfr else None)
+        np.savez_compressed(fname,clusters=clusters,
+                            frequencies=(frequencies if 
+                                frequencies is not None else []),
+                            cluster_p_values=cluster_p_values,
+                            band=band if band is not None else [])
+
 
     def _has_inverse(self,event,condition,value,keyword=None):
         fname = self._fname('source_estimates','inv','fif',keyword,
@@ -523,19 +563,21 @@ class MEEGbuddy:
     def _load_inverse(self,event,condition,value,keyword=None):
         if self._has_inverse(event,condition,value,keyword=keyword):
             fname = self._fname('source_estimates','inv','fif',keyword,
-                            event,condition,value)
+                                event,condition,value)
             fname2 = self._fname('source_estimates','inverse_params','npz',
                                  keyword,event,condition,value)
             f = np.load(fname2)
             return (read_inverse_operator(fname),f['lambda2'].item(),
                     f['method'].item(),f['pick_ori'].item())
         else:
-            raise ValueError('Inverse not found for %s %s %s' %(event,condition,value))
+            self._no_file_error('Inverse',event=event,condition=condition,
+                                value=value,keyword=keyword)
 
 
     def _save_inverse(self,inv,lambda2,method,pick_ori,
                       event,condition,value,keyword=None):
-        print('Saving inverse for %s %s %s' %(event,condition,value))
+        self._file_saved('Inverse',event=event,condition=condition,
+                         value=value,keyword=keyword)
         write_inverse_operator(self._fname('source_estimates','inv','fif',
                                            keyword,event,condition,value),
                                inv,verbose=False)
@@ -554,47 +596,73 @@ class MEEGbuddy:
         fname = self._fname('sources','source-lh','stc',keyword,
                             event,condition,value,'fs_av'*fs_av)
         if self._has_source(event,condition,value,keyword=keyword,fs_av=fs_av):
-            print('Fs average s'*fs_av + 'S'*(not fs_av) + 'ource loaded for '+
-                  '%s %s %s' %(event,condition,value))
+            self._file_loaded('Source',fs_av,event=event,condition=condition,
+                              value=value,keyword=keyword)
             return read_source_estimate(fname)
         else:
             print('Source not found for %s %s %s' %(event,condition,value))
 
 
     def _save_source(self,stc,event,condition,value,keyword=None,fs_av=False):
-        if fs_av:
-            print('Saving source fs average for %s %s %s' %(event,condition,
-                                                            value))
-            stc.save(self._fname('source_estimates','source',None,keyword,
-                                 event,condition,value,'fs_av'),ftype='stc')
-        else:
-            print('Saving source for %s %s %s' %(event,condition,value))
-            stc.save(self._fname('source_estimates','source',None,keyword,
-                                 event,condition,value),ftype='stc')
+        self._file_saved('Source',fs_av,event=event,condition=condition,
+                          value=value,keyword=keyword)
+        stc.save(self._fname('source_estimates','source',None,keyword,
+                             event,condition,value,'fs_av' if fs_av else None),
+                 ftype='stc')
 
 
-    def _has_PSD_image(self,keyword,ch,N,deltaN,fmin,fmax,NW):
-        fname = self._fname('analyses','image','npz',ch,
-                            'N_%i_dN_%.2f' %(N,deltaN),
-                            'fmin_%.2f_fmax_%.2f_NW_%i' %(fmin,fmax,NW))
-        return op.isfile(fname)
+    def _has_PSD(self,keyword):
+        return op.isfile(self._fname('analyses','psd','npz',keyword))
 
-    def _load_PSD_image(self,keyword,ch,N,deltaN,fmin,fmax,NW):
-        if self._has_PSD_image(keyword,ch,N,deltaN,fmin,fmax,NW):
-            fname = self._fname('analyses','image','npz',ch,
-                                'N_%i_dN_%.2f' %(N,deltaN),
-                                'fmin_%.2f_fmax_%.2f_NW_%i' %(fmin,fmax,NW))
-            print('Loading image')
+    def _load_PSD(self,keyword):
+        if self._has_PSD(keyword):
+            fname = self._fname('analyses','psd','npz',keyword)
+            self._file_loaded('Power Spectral Density',keyword=keyword)
             return np.load(fname)['image']
         else:
             return None
 
-    def _save_PSD_image(self,image,keyword,ch,N,deltaN,fmin,fmax,NW):
-        print('Saving psd multitaper image')
-        np.savez_compressed(self._fname('analyses','image','npz',ch,
-                            'N_%i_dN_%.2f' %(N,deltaN),
-                            'fmin_%.2f_fmax_%.2f_NW_%i' %(fmin,fmax,NW)),
+    def _save_PSD(self,image,keyword):
+        self._file_saved('Power Spectral Density',keyword=keyword)
+        np.savez_compressed(self._fname('analyses','psd','npz',keyword),
                             image=image)
+
+    def _file_message(self,action,ftype,*tags,event=None,
+                      condition=None,value=None,
+                      data_type=None,keyword=None):
+        return ('%s for %s' %(action,ftype) +
+                ' %s' %(event)*(event is not None) + 
+                ' %s' %(condition)*(condition is not None) + 
+                ' %s' %(value)*(value is not None) +
+                ' %s' %(data_type)*(data_type is not None) +
+                ' %s' %(keyword)*(keyword is not None) + 
+                ' %s' %(' '.join([str(tag) for tag in tags if 
+                                  tag and tag is not None])))
+
+
+    def _file_loaded(self,ftype,*tags,event=None,condition=None,
+                     value=None,data_type=None,keyword=None):
+        print(self._file_message('File loaded',ftype,event=event,
+                                 condition=condition,
+                                 value=value,data_type=data_type,
+                                 keyword=keyword,*tags))
+
+
+    def _file_saved(self,ftype,*tags,event=None,condition=None,value=None,
+                    data_type=None,keyword=None):
+        print(self._file_message('File saved',ftype,event=event,
+                                 condition=condition,
+                                 value=value,data_type=data_type,
+                                 keyword=keyword,*tags))
+
+
+    def _no_file_error(self,ftype,*tags,event=None,condition=None,
+                       value=None,data_type=None,keyword=None):
+        raise ValueError(self._file_message('No file found',
+                                 ftype,event=event,
+                                 condition=condition,
+                                 value=value,data_type=data_type,
+                                 keyword=keyword,*tags))
 
 
     def remove(self,event=None,keyword=None):
@@ -602,6 +670,7 @@ class MEEGbuddy:
         suffix = 'epo' if event else 'raw'
         fname = self._fname(dir_name,suffix,'fif',event,keyword)
         if op.isfile(fname):
+            print('Deleting %s' %(fname))
             os.remove(fname)
 
 
@@ -662,14 +731,15 @@ class MEEGbuddy:
             inst_info['ch_names'] += inst.info['ch_names']
             inst_info['chs'] += inst.info['chs']
             inst_info['nchan'] += inst.info['nchan']
+            inst_info['bads'] += inst.info['bads']
 
         if isinstance(insts[0],BaseRaw):
-            return RawArray(inst_data,inst_info)
+            return RawArray(inst_data,inst_info).set_annotations(insts[0].annotations)
         else:
             return EpochsArray(inst_data,inst_info,events=insts[0].events,tmin=inst[0].tmin)
 
-    def findICA(self,eogs=None,ecgs=None,event=None,keyword_in=None,
-                keyword_out=None,n_components=None,l_freq=None,h_freq=40,
+    def findICA(self,event=None,keyword_in=None,keyword_out=None,
+                eogs=None,ecgs=None,n_components=None,l_freq=None,h_freq=40,
                 detrend=1,component_optimization_n=3,tmin=None,tmax=None,
                 vis_tmin=None,vis_tmax=None,seed=11,overwrite=False,
                 overwrite_ica=False):
@@ -679,8 +749,7 @@ class MEEGbuddy:
         keyword_out = keyword_in if keyword_out is None else keyword_out
         data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
 
-        if (all([self._has_ICA(keyword=(dt if keyword_out is None
-                                        else dt + '_' + keyword_out))
+        if (all([self._has_ICA(data_type=dt,keyword=keyword_out,event=event)
                 for dt in data_types]) and not overwrite_ica):
             raise ValueError('Use \'overwrite_ica=True\' to overwrite')
         if event is None:
@@ -696,40 +765,35 @@ class MEEGbuddy:
         eogs,ecgs = self._default_aux(inst,eogs,ecgs)
         if not all([ch in inst.ch_names for ch in eogs + ecgs]):
             raise ValueError('Auxillary channels not in channel list.')
-        if n_components is None:
-            if isinstance(inst,BaseRaw):
-                n_components = inst.estimate_rank()
-            else:
-                n_components = len(inst.info['chs'])
         ica_insts = []
         for dt in data_types:
             print(dt)
+            inst2 = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
+                                           eeg=(dt == 'eeg'),exclude=[])
             ica = ICA(method='fastica',n_components=n_components,
                       random_state=seed)
-            inst2 = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
-                                           eeg=(dt == 'eeg'))
             ica.fit(inst2)
-            fig = ica.plot_components(picks=np.arange(ica.n_components),
+            fig = ica.plot_components(picks=np.arange(ica.get_components().shape[1]),
                                       show=False)
-            kw = dt if keyword_out is None else dt + '_' + keyword_out
-            fig.savefig(self._fname('plots','components','jpg',kw))
+            fig.savefig(self._fname('plots','components','jpg',dt,keyword_out))
             plt.close(fig)
 
             if isinstance(inst,BaseRaw):
                 raw = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
-                                             eeg=(dt == 'eeg'),eog=True,ecg=True)
+                                             eeg=(dt == 'eeg'),eog=True,ecg=True,
+                                             exclude=[])
                 all_scores = self._make_ICA_components(raw,ica,eogs,ecgs,detrend,
-                                                       l_freq,h_freq,kw,
+                                                       l_freq,h_freq,dt,keyword_out,
                                                        vis_tmin,vis_tmax)
             '''if component_optimization_n:
                 ica = self._optimize_components(raw,ica,all_scores,
                                                 component_optimization_n,
                                                 keyword_in,kw)'''
             inst2 = ica.apply(inst2, exclude=ica.exclude)
-            self._save_ICA(ica,event=event,keyword=kw)
+            self._save_ICA(ica,event=event,data_type=dt,keyword=keyword_out)
             ica_insts.append(inst2)
         ica_insts.append(inst.copy().pick_types(meg=False,eeg=False,eog=True,
-                                                ecg=True,stim=True))
+                                                ecg=True,stim=True,exclude=[]))
         inst = self._combine_insts(ica_insts)
 
         if isinstance(inst,BaseRaw):
@@ -737,7 +801,8 @@ class MEEGbuddy:
         else:
             self._save_epochs(inst,event,keyword=keyword_out)
 
-    def _optimize_components(self,raw,ica,all_scores,component_optimization_n,keyword,kw):
+    def _optimize_components(self,raw,ica,all_scores,
+                             component_optimization_n,keyword,data_type):
         # get component_optimization_n of components
         components = []
         for ch in all_scores:
@@ -760,11 +825,9 @@ class MEEGbuddy:
         min_score = None
         evokeds = {}
         for ch in all_scores:
-            if kw:
-                evokeds[ch] = self._load_evoked('ica_%s_%s' %(ch,kw),keyword=keyword)
-            else:
-                evokeds[ch] = self._load_evoked('ica_%s' %(ch),keyword=keyword)
-                print('Testing ICA component combinations for minimum correlation to artifact epochs')
+            evokeds[ch] = self._load_evoked('ica_%s' %(ch),data_type=data_type,
+                                            keyword=keyword)
+        print('Testing ICA component combinations for minimum correlation to artifact epochs')
         for combo in tqdm(combinations):
             score = 0
             ica.exclude = [component for i,component in enumerate(components) if combo[i]]
@@ -782,7 +845,7 @@ class MEEGbuddy:
         return ica
 
     def _make_ICA_components(self,raw,ica,eogs,ecgs,detrend,l_freq,h_freq,
-                             kw,vis_tmin,vis_tmax):
+                             data_type,keyword,vis_tmin,vis_tmax):
         if vis_tmin is not None:
             raw = raw.copy().crop(tmin=vis_tmin)
         if vis_tmax is not None:
@@ -790,18 +853,19 @@ class MEEGbuddy:
         all_scores = {}
         for ch in eogs:
             try:
-                epochs = create_eog_epochs(raw, ch_name=ch)
+                epochs = create_eog_epochs(raw,ch_name=ch,h_freq=8)
             except:
                 print('EOG %s dead' %(ch))
                 continue
-            indices, scores = ica.find_bads_eog(epochs, ch_name=ch)
+            indices, scores = ica.find_bads_eog(epochs,ch_name=ch)
             all_scores[ch] = scores
             if l_freq is not None or h_freq is not None:
                 epochs = epochs.filter(l_freq=l_freq,h_freq=h_freq)
             evoked = epochs.average()
             if detrend is not None:
                 evoked = evoked.detrend(detrend)
-            self._save_evoked(evoked,'ica_%s' %(ch),keyword=kw)
+            self._save_evoked(evoked,'ica_%s' %(ch),
+                              data_type=data_type,keyword=keyword)
             self._exclude_ICA_components(ica,ch,indices,scores)
 
         for ecg in ecgs:
@@ -817,7 +881,8 @@ class MEEGbuddy:
             evoked = epochs.average()
             if detrend is not None:
                 evoked = evoked.detrend(detrend)
-            self._save_evoked(evoked,'ica_%s' %(ecg),keyword=kw)
+            self._save_evoked(evoked,'ica_%s' %(ecg),
+                              data_type=data_type,keyword=keyword)
             self._exclude_ICA_components(ica,ecg,indices,scores)
             return all_scores
 
@@ -831,10 +896,10 @@ class MEEGbuddy:
         fig.savefig(self._fname('plots','source_scores','jpg',ch))
         plt.close(fig)
 
-    def plotICA(self,eogs=None,ecgs=None,event=None,
-                keyword_in=None,keyword_out=None,tmin=None,tmax=None,
+    def plotICA(self,event=None,keyword_in=None,keyword_out=None,
+                eogs=None,ecgs=None,tmin=None,tmax=None,
                 ylim=dict(eeg=[-40,40],grad=[-400,400],mag=[-1000,1000]),
-                show=True):
+                plot_properties=False,show=True):
         # To do: before and after plots for epochs are both before, why?
         keyword_out = keyword_in if keyword_out is None else keyword_out
         if event is None:
@@ -848,29 +913,37 @@ class MEEGbuddy:
         ica_insts = []
         for dt in data_types:
             inst1b = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
-                                            eeg=(dt == 'eeg'))
+                                            eeg=(dt == 'eeg'),exclude=[])
             inst2 = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
-                                           eeg=(dt == 'eeg'))
-            kw = dt if keyword_out is None else dt + '_' + keyword_out
-            ica = self._load_ICA(event=event,keyword=kw)
+                                           eeg=(dt == 'eeg'),exclude=[])
+            ica = self._load_ICA(event=event,data_type=dt,
+                                 keyword=keyword_out)
             if isinstance(inst,BaseRaw):
                 for ch in eogs:
-                    evoked = self._load_evoked('ica_%s' %(ch),keyword=kw)
+                    evoked = self._load_evoked('ica_%s' %(ch),
+                                               data_type=dt,
+                                               keyword=keyword_out)
                     self._plot_ICA_sources(ica,evoked,ch,show)
                 for ecg in ecgs:
-                    evoked = self._load_evoked('ica_%s' %(ecg),keyword=kw)
+                    evoked = self._load_evoked('ica_%s' %(ecg),
+                                               data_type=dt,
+                                               keyword=keyword_out)
                     self._plot_ICA_sources(ica,evoked,ecg,show)
-            fig = ica.plot_components(picks=np.arange(ica.n_components),
+            fig = ica.plot_components(picks=np.arange(ica.get_components().shape[1]),
                                       show=False)
             fig.show()
             ica.plot_sources(inst2,block=show,show=show,title=self.subject)
             inst2 = ica.apply(inst2,exclude=ica.exclude)
             if isinstance(inst,BaseRaw):
                 for ch in eogs:
-                    evoked = self._load_evoked('ica_%s' %(ch),keyword=kw)
+                    evoked = self._load_evoked('ica_%s' %(ch),
+                                               data_type=dt,
+                                               keyword=keyword_out)
                     self._plot_ICA_overlay(ica,evoked,ch,show)
                 for ecg in ecgs:
-                    evoked = self._load_evoked('ica_%s' %(ecg),keyword=kw)
+                    evoked = self._load_evoked('ica_%s' %(ecg),
+                                               data_type=dt,
+                                               keyword=keyword_out)
                     self._plot_ICA_overlay(ica,evoked,ecg,show)
             else:
                 fig = inst1b.average().plot(show=False,ylim=ylim,
@@ -879,11 +952,13 @@ class MEEGbuddy:
                 fig2 = inst2.average().plot(show=False,ylim=ylim,
                                             window_title='After ICA')
                 self._show_fig(fig2,show)
+            if plot_properties:
+                self._plot_ICA_properties(inst1b,ica,ica.exclude,show)
             plt.show()
             ica_insts.append(inst2)
-            self._save_ICA(ica,keyword=kw)
+            self._save_ICA(ica,data_type=dt,keyword=keyword_out)
         ica_insts.append(inst.copy().pick_types(meg=False,eeg=False,eog=True,
-                                                ecg=True,stim=True))
+                                                ecg=True,stim=True,exclude=[]))
 
         inst = self._combine_insts(ica_insts)
 
@@ -896,18 +971,26 @@ class MEEGbuddy:
     def _plot_ICA_overlay(self,ica,evoked,ch,show):
         evoked = evoked.detrend(1)
         fig = ica.plot_overlay(evoked,show=False)
-        fig.suptitle('%s %s' % (self.subject,ch))
+        fig.suptitle('%s %s' %(self.subject,ch))
         fig.savefig(self._fname('plots','ica_overlay','jpg',ch))
-        if show:
-            fig.show()
+        self._show_fig(fig,show)
 
 
     def _plot_ICA_sources(self,ica,evoked,ch,show):
         fig = ica.plot_sources(evoked,exclude=ica.exclude,show=False)
-        fig.suptitle('%s %s' % (self.subject, ch))
+        fig.suptitle('%s %s' %(self.subject, ch))
         fig.savefig(self._fname('plots','ica_time_course','jpg',ch))
-        if show:
-            fig.show()
+        self._show_fig(fig,show)
+
+
+    def _plot_ICA_properties(self,inst,ica,picks,show):
+        figs = ica.plot_properties(inst,picks=picks,show=False)
+        for i,fig in enumerate(figs):
+            fig.suptitle('%s' %(self.subject))
+            fig.savefig(self._fname('plots',
+                                    'ica_propterties_%s' %(picks[i]),
+                                    'jpg'))
+            self._show_fig(fig,show)
 
 
     def autoMarkBads(self,keyword_in=None,keyword_out=None,
@@ -935,7 +1018,7 @@ class MEEGbuddy:
         for dt in data_types:
             print(dt)
             raw2 = raw.copy().pick_types(meg=dt if dt in ['grad','mag'] else False,
-                                         eeg=dt == 'eeg')
+                                         eeg=dt == 'eeg',exclude=[])
             for i in range(len(raw2.ch_names)):
                 flat_count, reject_count = 0, 0
                 for j in range(seeds):
@@ -964,6 +1047,7 @@ class MEEGbuddy:
 
     def plotRaw(self,n_per_screen=20,scalings=None,keyword_in=None,
                 keyword_out=None,l_freq=0.5,h_freq=40,overwrite=False):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
         if (os.path.isfile(self._fname('raw','raw','fif',keyword_out))
             and not overwrite):
             print('Use \'overwrite = True\' to overwrite')
@@ -1021,6 +1105,7 @@ class MEEGbuddy:
 
     def makeEpochs(self,keyword_in=None,keyword_out=None,detrend=0,
                    normalized=True,overwrite=False):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
         if (all([self._has_epochs(event,keyword_out) for event in self.getEvents()])
             and not overwrite):
             self._overwrite_error('Epochs',keyword=keyword_out)
@@ -1055,7 +1140,11 @@ class MEEGbuddy:
             self._make_epochs(raw,'Response',ch,tmin,tmax,detrend,keyword_out,
                               n_events=n_events,response=True)
 
-    def _find_events(self,raw,ch,event_id=None): #backward compatible 
+    def _find_events(self,raw,ch): #backward compatible
+        if isinstance(ch,list):
+            ch, event_id = ch
+        else:
+            event_id = None
         try:
             events = find_events(raw,stim_channel=ch,output="onset",verbose=False)
             if event_id is not None:
@@ -1063,19 +1152,15 @@ class MEEGbuddy:
         except:
             events,event_id2 = events_from_annotations(raw)
             if event_id is None:
-                events = events[np.where(events[:,2]==event_id2[stim_ch])[0]]
+                events = events[np.where(events[:,2]==event_id2[ch])[0]]
             else:
                 events = events[np.where(events[:,2]==event_id)[0]]
         return events
 
     def _make_epochs(self,raw,event,ch,tmin,tmax,detrend,keyword_out,n_events=None,
                      response=False):
-        if isinstance(ch,list):
-            ch, event_id = ch
-        else:
-            event_id = None
         try:
-            self._find_events(raw,ch,event_id=event_id)
+            events = self._find_events(raw,ch)
         except:
             raise ValueError('%s channel not found in raw' %(event) +
                              ', maybe you meant to use normalized=False'*(event=='Baseline'))
@@ -1110,7 +1195,7 @@ class MEEGbuddy:
 
     def demeanEpochs(self,event,condition,values=None,keyword_in=None,
                      keyword_out=None):
-        values = self._default_values(values,condition)
+        values = self._default_values(condition,values=values)
         bl_epochs = self._load_epochs('Baseline',keyword=keyword_in)
 
         bl_value_indices = self._get_indices(bl_epochs,condition,values)
@@ -1175,7 +1260,7 @@ class MEEGbuddy:
             values = ['all']
             value_indices = {'all':[]}
         else:
-            values = self._default_values(values,condition)
+            values = self._default_values(condition,values=values)
             value_indices = self._get_indices(epochs,condition,values)
             if downsample:
                 np.random.seed(seed)
@@ -1214,9 +1299,10 @@ class MEEGbuddy:
             if self.eeg:
                 ax = axs[0+2*self.meg,i] if len(values) > 1 else axs[0+2*self.meg]
                 if i == 0:
-                    ax2.set_ylabel('eeg')
+                    ax.set_ylabel('eeg')
                 evoked.copy().pick_types(eeg=True).plot_topo(axes=ax,
-                                                        show=False,ylim=ylim)
+                                                             show=False,
+                                                             ylim=ylim)
             ax = axs[0,i] if len(values) > 1 else axs[0]
             ax.set_title(value)
         fname = self._fname('plots','evoked','jpg',keyword,event,condition,
@@ -1243,7 +1329,7 @@ class MEEGbuddy:
                     tfr=False,band_struct=None,vmin=None,vmax=None,
                     contours=6,time_points=5,show=True):
         epochs = self._load_epochs(event,keyword=keyword)
-        values = self._default_values(values,condition,contrast)
+        values = self._default_values(condition,values,contrast)
         value_indices = self._get_indices(epochs,condition,values)
         tmin,tmax = self._default_t(event,tmin,tmax)
         times = self._get_times(epochs,event,tmin=tmin,tmax=tmax)
@@ -1356,7 +1442,7 @@ class MEEGbuddy:
             value_indices = {'all':[]}
             nTR = len(epochs)
         else:
-            values = self._default_values(values,condition)
+            values = self._default_values(condition,values=values)
             value_indices = self._get_indices(epochs,condition,values)
             if downsample:
                 np.random.seed(seed)
@@ -1526,7 +1612,7 @@ class MEEGbuddy:
                                    tfr=True,band=band_struct,tfr_keyword=tfr_keyword,
                                    tmin=tmin,tmax=tmax,vmin=vmin,vmax=vmax)
         else:
-            values = self._default_values(values,condition,contrast)
+            values = self._default_values(condition,values,contrast)
             for value in values:
                 self._plotter_main(event,condition,[value],contrast=contrast,
                                    aux=aux,keyword=keyword,butterfly=butterfly,
@@ -1566,7 +1652,7 @@ class MEEGbuddy:
         return {ch:inst.ch_names[ch] for ch in chs}
 
 
-    def _default_values(self,values,condition,contrast=False):
+    def _default_values(self,condition,values=None,contrast=False):
         if values is None:
             df = read_csv(self.behavior)
             values = np.unique([cd for cd in df[condition] if
@@ -1583,12 +1669,13 @@ class MEEGbuddy:
 
 
     def _get_tfr_data(self,event,condition,values,keyword,value_indices,tind,
-                      band=None,mean_and_std=True,band_mean=True):
+                      band=None,mean_and_std=True,band_mean=True,data_type=None):
         values_dict = {}
         frequencies_old = None
         for value in values:
             epochs_data,frequencies,_ = self._load_TFR(event,condition,value,
-                                                       keyword)
+                                                       data_type=data_type,
+                                                       keyword=keyword)
             epochs_data = np.swapaxes(epochs_data,2,3)
             if frequencies_old is not None and frequencies != frequencies_old:
                 raise ValueError('TFRs must be compared for the same ' +
@@ -1686,14 +1773,14 @@ class MEEGbuddy:
                       vmin=None,vmax=None,show=True):
         heatmap = tfr and band is None
         epochs = self._load_epochs(event,keyword=keyword)
-        values = self._default_values(values,condition,contrast)
+        values = self._default_values(condition,values,contrast)
         value_indices = self._get_indices(epochs,condition,values)
         tmin,tmax = self._default_t(event,tmin,tmax)
         times = self._get_times(epochs,event,tmin=tmin,tmax=tmax)
-        kws = ['grad','mag']*self.meg + ['eeg']*self.eeg
-        for kw in kws:
-            epo = epochs.copy().pick_types(meg=kw if kw != 'eeg' else False,
-                                           eeg=True if kw == 'eeg' else False)
+        dts = ['grad','mag']*self.meg + ['eeg']*self.eeg
+        for dt in dts:
+            epo = epochs.copy().pick_types(meg=dt if dt != 'eeg' else False,
+                                           eeg=True if dt == 'eeg' else False)
             ch_dict = self._get_ch_dict(epo,aux=aux)
             fig,axs = self._setup_plot(ch_dict,butterfly=butterfly,values=values)
             if tfr:
@@ -1701,7 +1788,7 @@ class MEEGbuddy:
                                  t >= tmin and t<=tmax])
                 values_dict,frequencies = \
                     self._get_tfr_data(event,condition,values,tfr_keyword,
-                                       value_indices,tind,band=band,kw=kw)
+                                       value_indices,tind,band=band,data_type=dt)
             else:
                 values_dict = self._get_data(epo,values,value_indices,tmin,tmax)
                 frequencies = None
@@ -1733,7 +1820,7 @@ class MEEGbuddy:
 
             self._prepare_fig(fig,event,condition,values,aux=aux,butterfly=butterfly,
                               contrast=contrast,tfr=tfr,band=band,keyword=keyword,
-                              kw=kw,show=show)
+                              data_type=dt,show=show)
 
 
     def _plot_decider(self,epochs_mean,epochs_std,times,axs,fig,butterfly,
@@ -1849,7 +1936,7 @@ class MEEGbuddy:
 
     def _prepare_fig(self,fig,event,condition,values,aux=False,
                      butterfly=False,contrast=False,tfr=False,band=None,
-                     keyword=None,kw=None,show=True):
+                     keyword=None,data_type=None,show=True):
         if tfr:
             if band:
                 ylabel = 'Relative Abundance'
@@ -1860,7 +1947,7 @@ class MEEGbuddy:
         fig.text(0.02, 0.5, ylabel, va='center', rotation='vertical')
         fig.text(0.5, 0.02, 'Time (s)', ha='center')
         fig.set_size_inches(20,15)
-        title = (kw + ' ' + event + ' ' + condition + ' ' +
+        title = (data_type + ' ' + event + ' ' + condition + ' ' +
                  ' '.join([str(value) for value in values]) +
                  ' contrast'*contrast)
         if tfr and band:
@@ -1872,15 +1959,16 @@ class MEEGbuddy:
         fig.savefig(self._fname('plots','plot','jpg',contrast*'contrast',
                                 'tfr'*tfr,'aux'*aux,'butterfly'*butterfly,
                                 (bandname + '_band')*(band is not None),
-                                keyword,kw,event,condition,*values))
+                                keyword,data_type,event,condition,*values))
         self._show_fig(fig,show)
 
 
     def makeWavelets(self,event,condition,values=None,keyword_in=None,
                      keyword_out=None,fmin=3,fmax=35,nmin=3,nmax=10,steps=32,
                      compressed=False,normalize=True,overwrite=False):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
         #note compression may not always work
-        values = self._default_values(values,condition,contrast=False)
+        values = self._default_values(condition,values,contrast=False)
         frequencies = np.logspace(np.log10(fmin),np.log10(fmax),steps)
         n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
         epochs = self._load_epochs(event,keyword=keyword_in)
@@ -1897,36 +1985,42 @@ class MEEGbuddy:
             bl_values_dict = self._get_data(bl_epochs,values,bl_value_indices,
                                             bl_tmin-self.tbuffer,
                                             bl_tmax+self.tbuffer,mean_and_std=False)
-        for value in values:
-            if (self._has_TFR(event,condition,value,keyword=keyword_out) and
-                not overwrite):
-                self._overwrite_error('TFR',keyword=keyword_out)
-            if normalize:
-                bl_tfr = tfr_array_morlet(bl_values_dict[value],
-                                          sfreq=bl_epochs.info['sfreq'],
-                                          freqs=frequencies,n_cycles=n_cycles,
-                                          output='power')
-                bl_tind = bl_epochs.time_as_index(bl_times) #crop buffer
-                bl_tfr = bl_tfr[:,:,:,bl_tind]
-                self._save_TFR(bl_tfr,frequencies,n_cycles,'Baseline',condition,
-                               value,keyword_out,compressed=compressed)
-                bl_power = bl_tfr.mean(axis=0).mean(axis=-1) #average over epochs,times
-                bl_power = bl_power[np.newaxis,:,:,np.newaxis]
-            current_data = values_dict[value]
-            current_data -= current_data.mean(axis=0)
-            tfr = tfr_array_morlet(current_data,sfreq=epochs.info['sfreq'],
-                                   freqs=frequencies,n_cycles=n_cycles,
-                                   output='power')
-            tind = epochs.time_as_index(times) #crop buffer
-            tfr = tfr[:,:,:,tind]
-            if normalize:
-                tile_shape = (current_data.shape[0],1,1,len(times))
-                bl_power = np.tile(bl_power,tile_shape)
-                tfr /= bl_power #normalize
-            self._save_TFR(tfr,frequencies,n_cycles,event,condition,value,
-                           keyword_out,compressed=compressed)
-            del tfr
-            del bl_tfr
+        data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
+        for dt in data_types:
+            print(dt)
+            epo = epochs.copy().pick_types(meg=False if dt == 'eeg' else dt,
+                                           eeg=(dt == 'eeg'),exclude=[])
+            for value in values:
+                if (self._has_TFR(event,condition,value,
+                                  data_type=dt,keyword=keyword_out) and
+                    not overwrite):
+                    self._overwrite_error('TFR',keyword=keyword_out)
+                if normalize:
+                    bl_tfr = tfr_array_morlet(bl_values_dict[value],
+                                              sfreq=bl_epochs.info['sfreq'],
+                                              freqs=frequencies,n_cycles=n_cycles,
+                                              output='power')
+                    bl_tind = bl_epochs.time_as_index(bl_times) #crop buffer
+                    bl_tfr = bl_tfr[:,:,:,bl_tind]
+                    self._save_TFR(bl_tfr,frequencies,n_cycles,'Baseline',condition,
+                                   value,keyword_out,compressed=compressed)
+                    bl_power = bl_tfr.mean(axis=0).mean(axis=-1) #average over epochs,times
+                    bl_power = bl_power[np.newaxis,:,:,np.newaxis]
+                current_data = values_dict[value]
+                current_data -= current_data.mean(axis=0)
+                tfr = tfr_array_morlet(current_data,sfreq=epochs.info['sfreq'],
+                                       freqs=frequencies,n_cycles=n_cycles,
+                                       output='power')
+                tind = epochs.time_as_index(times) #crop buffer
+                tfr = tfr[:,:,:,tind]
+                if normalize:
+                    tile_shape = (current_data.shape[0],1,1,len(times))
+                    bl_power = np.tile(bl_power,tile_shape)
+                    tfr /= bl_power #normalize
+                self._save_TFR(tfr,frequencies,n_cycles,event,condition,value,
+                               dt,compressed=compressed)
+                del tfr
+                del bl_tfr
 
 
     def psdMultitaper(self,keyword=None,ch='Oz',N=6,deltaN=0.25,NW=3.0,
@@ -1948,8 +2042,8 @@ class MEEGbuddy:
         t_end = raw.times[int(n_full_windows*N*Fs)]
         n_windows = int((n_full_windows-1) * (N/deltaN)) + 1
 
-        if self._has_PSD_image(keyword,ch,N,deltaN,fmin,fmax,NW) and not overwrite:
-            image = self._load_PSD_image(keyword,ch,N,deltaN,fmin,fmax,NW)
+        if self._has_PSD(keyword) and not overwrite:
+            image = self._load_PSD(keyword)
         else:
             imsize = int(Fs/2*N) + 1
             image = np.zeros((imsize,int(n_full_windows*(N/deltaN))))
@@ -1971,7 +2065,7 @@ class MEEGbuddy:
             f_inds = [i for i,freq in enumerate(f) if
                       (freq >= fmin and freq <= fmax)]
             image = image[f_inds]
-            self._save_PSD_image(image,keyword,ch,N,deltaN,fmin,fmax,NW)
+            self._save_PSD(image,keyword)
 
         fig2, ax2 = plt.subplots()
         fig2.set_size_inches(12,8)
@@ -2029,8 +2123,8 @@ class MEEGbuddy:
             return state_times
 
 
-    def assignConditionFromStateTimes(self,event,condition,state_times,
-                                      no_state='Neither'):
+    def assignConditionFromStateTimes(self,event,state_times,
+                                      condition='State',no_state='Neither'):
         event_times = self.getEventTimes(event)
         states = np.tile(no_state,len(event_times))
         for i,t in enumerate(event_times):
@@ -2038,8 +2132,16 @@ class MEEGbuddy:
                 if any([t <= tmax and t >= tmin for
                         tmin,tmax in state_times[state]]):
                     states[i] = state
-        df = read_csv(self.behavior)
-        df[condition] = states
+        try:
+            df = read_csv(self.behavior)
+            df[condition] = states
+        except:
+            df = DataFrame({condition:states})
+            with open(self.file,'r') as f:
+                meta_data = json.load(f)
+            meta_data['Behavior'] = self.behavior
+            with open(self.file,'w') as f:
+                json.dump(meta_data,f)
         df.to_csv(self.behavior)
 
 
@@ -2060,7 +2162,7 @@ class MEEGbuddy:
                   tmin=None,tmax=None,threshold=4.0,contrast=False,
                   aux=False,n_permutations=1000,n_jobs=10):
         alpha = 0.3
-        values = self._default_values(values,condition,contrast)
+        values = self._default_values(condition,values,contrast)
         tmin,tmax = self._default_t(event,tmin,tmax)
         if contrast:
             source_data0 = self._load_source(event,condition,values[0],keyword=keyword)
@@ -2094,7 +2196,7 @@ class MEEGbuddy:
             alpha = 1
         else:
             alpha = 0.3
-        values = self._default_values(values,condition,contrast)
+        values = self._default_values(condition,values,contrast)
         tmin,tmax = self._default_t(event,tmin,tmax)
         epochs = self._load_epochs(event,keyword=keyword)
         epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
@@ -2257,6 +2359,7 @@ class MEEGbuddy:
                        bad_ar_threshold=0.5,n_jobs=10,
                        n_interpolates=[1,2,3,5,7,10,20],random_state=89,
                        consensus_percs=np.linspace(0,1.0,11),overwrite=False):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
         if self._has_epochs(event,keyword_out) and not overwrite:
            self._overwrite_error('Epochs',event=event,keyword=keyword_out)
         epochs = self._load_epochs(event,keyword=keyword_in)
@@ -2274,8 +2377,9 @@ class MEEGbuddy:
 
     def plotAutoReject(self,event,keyword_in=None,keyword_out=None,
                        ylim=dict(eeg=(-30,30)),show=True):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
         epochs_ar = self._load_epochs(event,keyword=keyword_out)
-        epochs_comparison = self._load_epochs(event,keyword=keyword_out)
+        epochs_comparison = self._load_epochs(event,keyword=keyword_in)
         ar,reject_log = self._load_autoreject(event)
 
         set_matplotlib_defaults(plt, style='seaborn-white')
@@ -2338,7 +2442,7 @@ class MEEGbuddy:
             raise ValueError('Source estimation parameters not defined, ' +
                              'either add to meta data or redefine MEEGbuddy')
 
-        values = self._default_values(values,condition)
+        values = self._default_values(condition,values=values)
         keyword_out = keyword_in if keyword_out is None else keyword_out
 
         if (all([self._has_source(event,condition,value,keyword_out)
@@ -2430,7 +2534,7 @@ class MEEGbuddy:
 
 
     def fsaverageMorph(self,event,condition,values=None,keyword=None):
-        values = self._default_values(values,condition)
+        values = self._default_values(condition,values=values)
         for value in values:
             stc = self._load_source(event,condition,value,keyword=keyword)
             stc_fs = stc.morph('fsaverage')
@@ -2461,7 +2565,7 @@ class MEEGbuddy:
             combines them all in one animated gif is gif_combine=True. It's okay
             to have other windows over the mlab plots but don't minimize them
             otherwise the image write out will break! '''
-        values = self._default_values(values,condition)
+        values = self._default_values(condition,values=values)
         tmin,tmax = self._default_t(event,tmin,tmax)
         epochs = self._load_epochs(event,keyword=keyword)
         epochs = epochs.crop(tmin=tmin,tmax=tmax)
@@ -2564,6 +2668,7 @@ class MEEGbuddy:
             interp_data = self._interpolate(inst_data,ch_ind,events[:,0],
                                             npoint_art,offset,points,k)
             interp_spline = RawArray(interp_data,inst.info,verbose=False)
+            interp_spline = interp_spline.set_annotations(inst.annotations)
         if mode == 'spline':
             interp = interp_spline
         else:
@@ -2646,21 +2751,24 @@ class MEEGbuddy:
         return this_data
 
 
-    def applyInterpolation(self,inst,event=None,keyword_out=None):
+    def applyInterpolation(self,inst,event=None,keyword_out=None,overwrite=False):
         if isinstance(inst,BaseEpochs):
             if event is None:
                 raise ValueError('The event of the epochs must be provided.')
+            if self._has_epochs(event,keyword=keyword_out) and not overwrite:
+                self._overwrite_error('Epochs',event=event,keyword=keyword_out)
             self._save_epochs(inst,event,keyword=keyword_out)
         elif isinstance(inst,BaseRaw):
+            if self._has_raw(keyword=keyword_out) and not overwrite:
+                self._overwrite_error('Raw',keyword=keyword_out)
             self._save_raw(inst,keyword=keyword_out)
 
 
     def filterEpochs(self,event,keyword_in=None,keyword_out=None,
                      h_freq=None,l_freq=None,overwrite=False):
+        keyword_out = keyword_out if keyword_out is not None else keyword_in
         if self._has_epochs(event,keyword=keyword_out) and not overwrite:
-            raise ValueError('Epochs file already exists ' +
-                             'for %s ' %(keyword_out)*(keyword_out is not None),
-                             'use \'overwrite=True\'')
+            self._overwrite_error('Epochs',event=event,keyword=keyword_out)
         epochs = self._load_epochs(event,keyword=keyword_in)
         epochs = epochs.copy().filter(h_freq=h_freq,l_freq=l_freq)
         self._save_epochs(epochs,event,keyword=keyword_out)
@@ -2671,9 +2779,7 @@ class MEEGbuddy:
         keyword_out = keyword_out if keyword_out is not None else keyword_in
         fname = self._fname('raw','raw','fif',keyword_out)
         if self._has_raw(keyword=keyword_out) and not overwrite:
-            raise ValueError('Raw file already exists ' +
-                             'for %s ' %(keyword_out)*(keyword_out is not None),
-                             'use \'overwrite=True\'')
+            self._overwrite_error('Raw',keyword=keyword)
         raw = self._load_raw(keyword=keyword_in)
         if maxwell:
             raw = maxwell_filter(raw)
@@ -2977,7 +3083,7 @@ class MEEGbuddy:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=True,verbose=False)
         info = epochs.info
-        values = self._default_values(values,condition)
+        values = self._default_values(condition,values=values)
         value_indices = self._get_indices(epochs,condition,values)
         bl_tind = np.intersect1d(np.where(bl_tmin<=epochs.times),
                                  np.where(epochs.times<=bl_tmax))
@@ -3056,6 +3162,7 @@ class MEEGbuddy:
                 and not recalculate_baseline):
                 print('Loading pre-computed bootstraps')
             else:
+                print('Running baseline bootstrap for %s' %(value))
                 indices = value_indices[value]
                 if downsample and not shared_baseline:
                     indices = downsampleIndices(indices,nTR,condition,value)
@@ -3070,11 +3177,12 @@ class MEEGbuddy:
                                            condition,value,keyword_out)
         # PCI by value
         for value in values:
-            if ((os.path.isfile(self._fname('analyses','pci','npz',
+            if ((os.path.isfile(self._fname('analyses','PCI','npz',
                                 keyword_out,event,condition,value)))
                  and not recalculate_PCI):
                 print('PCI already computed')
             else:
+                print('Running Lempel-Ziv compression for %s' %(value))
                 Y,J,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
                     self._load_noreun_baseline(event,condition,
                                                'all' if shared_baseline else value,
@@ -3092,10 +3200,19 @@ class MEEGbuddy:
                                       event,condition,value,keyword_out)
 
 
+    def _has_noreun_baseline(self,event,condition,value,keyword=None):
+        fname = self._fname('analyses','Threshold','npz',keyword,
+                            event,condition,value)
+        return op.isfile(fname)
+
+
     def _load_noreun_baseline(self,event,condition,value,keyword=None):
         fname = self._fname('analyses','Threshold','npz',keyword,
                             event,condition,value)
         if op.isfile(fname):
+            self._file_loaded('Bootstrap Threshold',event=event,
+                              condition=condition,value=value,
+                              keyword=keyword)
             f = np.load(fname)
             try:
                 return (f['Y'],f['J'],f['Threshold'],f['events'],f['bl_tmin'].item(),
@@ -3104,13 +3221,16 @@ class MEEGbuddy:
                 return (f['Y'],f['J'],f['Threshold'],f['bl_tmin'].item(),
                         f['bl_tmax'].item(),f['Nboot'].item(),f['alpha'].item())
         else:
-            raise ValueError('Threshold not computed for %s %s %s %s'
-                             %(event,condition,value,
-                               keyword if keyword is not None else ''))
+            self._no_file_error('Bootstrap Threshold',event=event,
+                                condition=condition,value=value,
+                                keyword=keyword)
 
 
     def _save_noreun_baseline(self,Y,J,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha,
                               event,condition,value,keyword=None):
+        self._file_saved('Bootstrap Threshold',event=event,
+                         condition=condition,value=value,
+                         keyword=keyword)
         fname = self._fname('analyses','Threshold','npz',keyword,
                             event,condition,value)
         np.savez_compressed(fname,Y=Y,J=J,Threshold=Threshold,bl_tmin=bl_tmin,
@@ -3118,23 +3238,30 @@ class MEEGbuddy:
                             alpha=alpha)
 
 
+    def _has_noreun_PCI(self,event,condition,value,keyword=None):
+        fname = self._fname('analyses','PCI','npz',keyword,
+                            event,condition,value)
+        return op.isfile(fname)
+
+
     def _load_noreun_PCI(self,event,condition,value,keyword=None):
-        fname = self._fname('analyses','pci','npz',keyword,
+        fname = self._fname('analyses','PCI','npz',keyword,
                             event,condition,value)
         if os.path.isfile(fname):
-            print('Loading PCI for %s %s %s' %(event,condition,value))
+            self._file_loaded('PCI',event=event,condition=condition,
+                                value=value,keyword=keyword)
             f = np.load(fname)
         else:
-            raise ValueError('%s %s %s %s %s PCI not calculated'
-                             %(event,condition,value,
-                             keyword if keyword is not None else ''))
+            self._no_file_error('PCI',event=event,condition=condition,
+                                value=value,keyword=keyword)
         return f['ct'],f['binJ'],f['tmin'].item(),f['tmax'].item(),f['npoint_art'].item()
 
 
     def _save_noreun_PCI(self,ct,binJ,tmin,tmax,npoint_art,event,condition,value,
                          keyword=None):
-        print('Saving noreun PCI for %s %s %s' %(event,condition,value))
-        fname = self._fname('analyses','pci','npz',keyword,
+        self._file_saved('PCI',event=event,condition=condition,
+                         value=value,keyword=keyword)
+        fname = self._fname('analyses','PCI','npz',keyword,
                             event,condition,value)
         np.savez_compressed(fname,ct=ct,binJ=binJ,tmin=tmin,tmax=tmax,
                             npoint_art=npoint_art)
@@ -3143,7 +3270,7 @@ class MEEGbuddy:
     def plotNoreunPCI(self,event,condition,values=None,keyword=None,
                       ssm=True,pci=True,downsampled=True,shared_baseline=False,
                       fontsize=24,wspace=0.4,linewidth=4,show=True):
-        values = self._default_values(values,condition)
+        values = self._default_values(condition,values=values)
         if len(values) > 1:
             fig, axs = plt.subplots(1,len(values))
         else:
@@ -3154,7 +3281,7 @@ class MEEGbuddy:
         yMAX = 0
         for i,value in enumerate(values):
             ct,binJ,tmin,tmax,npoint_art = \
-                self._load_noreun_PCI(event,condition,value,ar,keyword)
+                self._load_noreun_PCI(event,condition,value,keyword)
             Y,J,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
                     self._load_noreun_baseline(event,condition,
                                                'all' if shared_baseline else value,
@@ -3168,7 +3295,7 @@ class MEEGbuddy:
                 nSRC,nTIME = binJ.shape
                 ax.imshow(binJ,extent=[0,nTIME,0,nSRC],
                           aspect='auto',cmap='Greys')
-                ax.set_ylim(ymin=-10,ymax=nSRC+10)
+                ax.set_ylim(bottom=-10,top=nSRC+10)
                 ax.set_ylabel('Sources Ranked by Activity',fontsize=fontsize)
             if pci:
                 ax = axs[i]
@@ -3187,7 +3314,7 @@ class MEEGbuddy:
             ax.set_xticks(np.linspace(0,ct.shape[0],5))
             ax.set_xticklabels(np.round(np.linspace(start,tmax,5),2))
 
-        if pci: [ax.set_ylim(ymax=yMAX*1.05) for ax in axs]
+        if pci: [ax.set_ylim(top=yMAX*1.05) for ax in axs]
         title = ('%s %s' %(event,condition) + ' Significant Sources'*ssm +
                  ' and'*(pci and ssm) + ' PCI'*pci +
                  ' %s' %(keyword) * (keyword is not None))
@@ -3231,7 +3358,7 @@ class MEEGbuddy:
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=True,verbose=False)
-        values = self._default_values(values,condition)
+        values = self._default_values(condition,values=values)
         value_indices = self._get_indices(epochs,condition,values)
         nTR = min([len(value_indices[value]) for value in value_indices])
         if fmin and fmax:
