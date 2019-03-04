@@ -4,7 +4,7 @@ MEEGbuddy/__pycache__
 MEEGbuddyDemo/data/*
 !MEEGbuddyDemo/data/plots/
 *.gif
-!MEEGbuddyDemo/data/plots/Demo/Demo_Demo_eeg_meg_Response_RewardType_High_ar_both_lat_med_cau_dor_ven_fro_par-source_plot.gif
+!MEEGbuddyDemo/data/plots/sample_AudioVis_eeg_meg_Cue_Stimulus Type_Right Visual_Autoreject_Filtered_both_lat_med_cau_dor_ven_fro_par-source_plot.gif
 MEEGbuddyDemo/.ipynb_checkpoints
 MEEGbuddyDemo/cachedir
 .ipynb_checkpoints
