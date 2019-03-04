@@ -151,7 +151,7 @@ class MEEGbuddy:
             meta_data['Task'] = task
 
             processes = ['meta_data','raw','epochs','source_estimates','plots',
-                         'analyses','behavior']
+                         'analyses','behavior','preprocessing']
 
             meta_data['Process Directories'] = {}
             for process in processes:
@@ -290,6 +290,8 @@ class MEEGbuddy:
         if not os.path.isdir(dirname):
             os.makedirs(dirname)
         fname = self.subject
+        if self.session:
+            fname += '_' + str(self.session)
         if self.task:
             fname += '_' + str(self.task)
         if self.eeg:
@@ -347,20 +349,12 @@ class MEEGbuddy:
 
 
     def _has_ICA(self,event=None,keyword=None,data_type=None):
-        if event is None:
-            return op.isfile(self._fname('raw','ica','fif',
-                                         data_type,keyword))
-        else:
-            return op.isfile(self._fname('epochs','ica','fif',
-                                         data_type,keyword,event))
+        return op.isfile(self._fname('preprocessing','ica','fif',
+                                     data_type,keyword,event))
 
     def _load_ICA(self,event=None,keyword=None,data_type=None):
-        if event is None:
-            fname = self._fname('raw','ica','fif',
-                                data_type,keyword)
-        else:
-            fname = self._fname('epochs','ica','fif',
-                                data_type,keyword,event)
+        fname = self._fname('preprocessing','ica','fif',
+                            data_type,keyword,event)
         if op.isfile(fname):
             ica = read_ica(fname)
             self._file_loaded('ICA',event=event,data_type=data_type,
@@ -374,10 +368,7 @@ class MEEGbuddy:
     def _save_ICA(self,ica,event=None,keyword=None,data_type=None):
         self._file_saved('ICA',event=event,data_type=data_type,
                          keyword=keyword)
-        if event is None:
-            ica.save(self._fname('raw','ica','fif',keyword))
-        else:
-            ica.save(self._fname('epochs','ica','fif',keyword,event))
+        ica.save(self._fname('preprocessing','ica','fif',keyword,event))
 
 
     def _has_epochs(self,event,keyword=None):
@@ -403,7 +394,7 @@ class MEEGbuddy:
 
 
     def _has_evoked(self,event,data_type=None,keyword=None):
-        return op.isfile(self._fname('epochs','ave','fif',
+        return op.isfile(self._fname('preprocessing','ave','fif',
                                      event,data_type,keyword))
 
 
@@ -411,7 +402,7 @@ class MEEGbuddy:
         if not self._has_evoked(event,data_type=data_type,keyword=keyword):
             self._no_file_error('Evoked',event=event,data_type=data_type,
                                 keyword=keyword)
-        evoked = read_evokeds(self._fname('epochs','ave','fif',event,
+        evoked = read_evokeds(self._fname('preprocessing','ave','fif',event,
                                           data_type,keyword),
                               verbose=False)
         self._file_loaded('Evoked',event=event,data_type=data_type,
@@ -422,23 +413,26 @@ class MEEGbuddy:
     def _save_evoked(self,evoked,event,data_type=None,keyword=None):
         self._file_saved('Evoked',event=event,data_type=data_type,
                           keyword=keyword)
-        evoked.save(self._fname('epochs','ave','fif',event,
+        evoked.save(self._fname('preprocessing','ave','fif',event,
                                 data_type,keyword))
 
 
-    def _has_autoreject(self,event):
-        return op.isfile(self._fname('epochs','ar','npz',event))
+    def _has_autoreject(self,event,keyword=None):
+        return op.isfile(self._fname('preprocessing','ar','npz',
+                                     event,keyword))
 
 
-    def _load_autoreject(self,event):
-        if self._has_autoreject(event):
-            f = np.load(self._fname('epochs','ar','npz',event))
+    def _load_autoreject(self,event,keyword=None):
+        if self._has_autoreject(event,keyword=keyword):
+            f = np.load(self._fname('preprocessing','ar','npz',
+                                    event,keyword))
             return f['ar'].item(),f['reject_log'].item()
         else:
             print('Autoreject must be run for ' + event)
 
-    def _save_autoreject(self,event,ar,reject_log):
-        np.savez_compressed(self._fname('epochs','ar','npz',event),
+    def _save_autoreject(self,ar,reject_log,event,keyword=None):
+        np.savez_compressed(self._fname('preprocessing','ar','npz',
+                                        event,keyword),
                             ar=ar,reject_log=reject_log)
 
 
@@ -685,6 +679,10 @@ class MEEGbuddy:
         raise ValueError(error_msg)
 
 
+    def _get_data_types(self):
+        return ['grad','mag']*self.meg + ['eeg']*self.eeg
+
+
     def raw2mat(self,keyword=None,ch=None):
         raw = self._load_raw(keyword=keyword)
         if ch is None:
@@ -710,7 +708,7 @@ class MEEGbuddy:
         return (list(self.events.keys()) + ['Response']*(self.response is not None) +
                 ['Baseline']*(self.baseline is not None and baseline))
 
-    def _default_aux(self,inst,eogs,ecgs):
+    def _default_aux(self,inst,eogs=None,ecgs=None):
         if eogs is None:
             inds = pick_types(inst.info,meg=False,eog=True)
             eogs = [inst.ch_names[ind] for ind in inds]
@@ -747,7 +745,7 @@ class MEEGbuddy:
         # one raw data and applied to another
         # note: filter only filters evoked
         keyword_out = keyword_in if keyword_out is None else keyword_out
-        data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
+        data_types = self._get_data_types()
 
         if (all([self._has_ICA(data_type=dt,keyword=keyword_out,event=event)
                 for dt in data_types]) and not overwrite_ica):
@@ -909,7 +907,7 @@ class MEEGbuddy:
             tmin,tmax = self._default_t(event,tmin,tmax)
             inst = inst.crop(tmin=tmin,tmax=tmax)
         eogs,ecgs = self._default_aux(inst,eogs,ecgs)
-        data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
+        data_types = self._get_data_types()
         ica_insts = []
         for dt in data_types:
             inst1b = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
@@ -988,8 +986,8 @@ class MEEGbuddy:
         for i,fig in enumerate(figs):
             fig.suptitle('%s' %(self.subject))
             fig.savefig(self._fname('plots',
-                                    'ica_propterties_%s' %(picks[i]),
-                                    'jpg'))
+                                    'ica_propterties',
+                                    'jpg',picks[i]))
             self._show_fig(fig,show)
 
 
@@ -1013,7 +1011,7 @@ class MEEGbuddy:
            return
         raw = self._load_raw(keyword=keyword_in)
         raw.info['bads'] = []
-        data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
+        data_types = self._get_data_types()
         rawlen = len(raw._data[0])
         for dt in data_types:
             print(dt)
@@ -1234,20 +1232,18 @@ class MEEGbuddy:
         epochs_copy = epochs.copy().crop(tmin=tmin,tmax=tmax)
         if l_freq is not None or h_freq is not None:
             epochs_copy = epochs_copy.filter(l_freq=l_freq,h_freq=h_freq)
-        if len(epochs.event_id) != len(epochs):
-            event_id = epochs.event_id
-            epochs.event_id = {str(i):i for i in range(len(epochs))}
-            epochs_copy.plot(n_epochs=n_epochs,n_channels=n_channels,block=True,
-                             scalings=scalings)
-            epochs.event_id = event_id
-        else:
-            epochs_copy.plot(n_epochs=n_epochs,n_channels=n_channels,block=True,
+        epochs_copy.plot(n_epochs=n_epochs,n_channels=n_channels,block=True,
                              scalings=scalings)
         epochs.info['bads'] = epochs_copy.info['bads']
-        epochs.events = epochs_copy.events
-        epochs.selection = epochs_copy.selection
-        epochs.drop_log = epochs_copy.drop_log
-        epochs._data = epochs._data[epochs.selection]
+        drop_indices = []
+        i = 0
+        for e1,e2 in zip(epochs.drop_log,epochs_copy.drop_log):
+            if e1 == []:
+                if e2 != []:
+                    drop_indices.append(i)
+                i += 1
+
+        epochs = epochs.drop(drop_indices)
         self._save_epochs(epochs,event,keyword=keyword_out)
 
 
@@ -1514,7 +1510,7 @@ class MEEGbuddy:
         return epochs
 
 
-    def _default_t(self,event,tmin,tmax,buffered=False):
+    def _default_t(self,event,tmin=None,tmax=None,buffered=False):
         if event == 'Response':
             _,tmin2,tmax2 = self.response
         elif event == 'Baseline':
@@ -1602,6 +1598,7 @@ class MEEGbuddy:
         # condition or all events and conditions
         # default values are frequency from 3 to 35 Hz with 32 steps and
         # cycles from 3 to 10 s-1 with 32 steps
+        tfr_keyword = keyword if tfr_keyword is None else tfr_keyword
         if bands:
             for band in bands:
                 print(band + ' band')
@@ -1777,7 +1774,7 @@ class MEEGbuddy:
         value_indices = self._get_indices(epochs,condition,values)
         tmin,tmax = self._default_t(event,tmin,tmax)
         times = self._get_times(epochs,event,tmin=tmin,tmax=tmax)
-        dts = ['grad','mag']*self.meg + ['eeg']*self.eeg
+        dts = self._get_data_types()
         for dt in dts:
             epo = epochs.copy().pick_types(meg=dt if dt != 'eeg' else False,
                                            eeg=True if dt == 'eeg' else False)
@@ -1965,7 +1962,8 @@ class MEEGbuddy:
 
     def makeWavelets(self,event,condition,values=None,keyword_in=None,
                      keyword_out=None,fmin=3,fmax=35,nmin=3,nmax=10,steps=32,
-                     compressed=False,normalize=True,overwrite=False):
+                     compressed=False,normalize=True,save_baseline=False,
+                     overwrite=False):
         keyword_out = keyword_in if keyword_out is None else keyword_out
         #note compression may not always work
         values = self._default_values(condition,values,contrast=False)
@@ -1985,7 +1983,7 @@ class MEEGbuddy:
             bl_values_dict = self._get_data(bl_epochs,values,bl_value_indices,
                                             bl_tmin-self.tbuffer,
                                             bl_tmax+self.tbuffer,mean_and_std=False)
-        data_types = ['grad','mag']*self.meg + ['eeg']*self.eeg
+        data_types = self._get_data_types()
         for dt in data_types:
             print(dt)
             epo = epochs.copy().pick_types(meg=False if dt == 'eeg' else dt,
@@ -2002,8 +2000,10 @@ class MEEGbuddy:
                                               output='power')
                     bl_tind = bl_epochs.time_as_index(bl_times) #crop buffer
                     bl_tfr = bl_tfr[:,:,:,bl_tind]
-                    self._save_TFR(bl_tfr,frequencies,n_cycles,'Baseline',condition,
-                                   value,keyword_out,compressed=compressed)
+                    if save_baseline:
+                        self._save_TFR(bl_tfr,frequencies,n_cycles,'Baseline',
+                                       condition,value,keyword_out,
+                                       compressed=compressed)
                     bl_power = bl_tfr.mean(axis=0).mean(axis=-1) #average over epochs,times
                     bl_power = bl_power[np.newaxis,:,:,np.newaxis]
                 current_data = values_dict[value]
@@ -2372,7 +2372,7 @@ class MEEGbuddy:
         rejected = float(sum(reject_log.bad_epochs))/len(epochs)
         print('\n\n\n\n\n\nAutoreject rejected %.0f%% of epochs\n\n\n\n\n\n'%(100*rejected))
         self._save_epochs(epochs_ar,event,keyword=keyword_out)
-        self._save_autoreject(event,ar,reject_log)
+        self._save_autoreject(ar,reject_log,event,keyword=keyword_out)
 
 
     def plotAutoReject(self,event,keyword_in=None,keyword_out=None,
@@ -2380,7 +2380,7 @@ class MEEGbuddy:
         keyword_out = keyword_in if keyword_out is None else keyword_out
         epochs_ar = self._load_epochs(event,keyword=keyword_out)
         epochs_comparison = self._load_epochs(event,keyword=keyword_in)
-        ar,reject_log = self._load_autoreject(event)
+        ar,reject_log = self._load_autoreject(event,keyword=keyword_out)
 
         set_matplotlib_defaults(plt, style='seaborn-white')
         if self.eeg:
@@ -2428,8 +2428,9 @@ class MEEGbuddy:
         self._show_fig(fig,show)
 
 
-    def plotRejectLog(self,event,keyword_in=None,scalings=dict(eeg=40e-6)):
-        ar,reject_log = self._load_autoreject(event)
+    def plotRejectLog(self,event,keyword_in=None,keyword_out=None,
+                      scalings=dict(eeg=40e-6)):
+        ar,reject_log = self._load_autoreject(event,keyword=keyword_out)
         epochs_comparison = self._load_epochs(event,keyword=keyword_in)
         reject_log.plot_epochs(epochs_comparison,scalings=scalings,
                                title='Dropped and interpolated Epochs')
@@ -3366,7 +3367,7 @@ class MEEGbuddy:
                 print('Ignoring fmin and fmax because bands are defined')
             else:
                 bands = {i:(i,i) for i in range(fmin,fmax+1,bandwidth)}
-        for dt in ['grad','mag']*self.meg + ['eeg']*self.eeg:
+        for dt in self._get_data_types():
             this_epochs = epochs.copy().pick_types(meg=False if dt == 'eeg' else dt,
                                                    eeg=(dt == 'eeg'))
             for band_name in bands:
