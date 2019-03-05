@@ -95,7 +95,7 @@ class MEEGbuddy:
     def __init__(self, subject=None, session=None, fdata=None, behavior=None,
                  baseline=None, stimuli=None, eeg=False, meg=False,
                  response=None, task=None, no_response=None,
-                 exclude_response=None, tbuffer=0.25, subjects_dir=None,
+                 exclude_response=None, tbuffer=1, subjects_dir=None,
                  epochs=None, event=None, fs_subjects_dir=None, bemf=None,
                  srcf=None, transf=None, preload=True, seed=551832, file=None):
         '''
@@ -382,6 +382,7 @@ class MEEGbuddy:
                              verbose=False,preload=True)
         self._file_loaded('Epochs',event=event,keyword=keyword)
         epochs._data = epochs._data.astype('float64') # mne bug work-around
+        epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
         return epochs
 
 
@@ -480,66 +481,61 @@ class MEEGbuddy:
     def _save_TFR(self,tfr,frequencies,n_cycles,
                   event,condition,value,
                   data_type=None,keyword=None,compressed=True):
-       self._file_saved('TFR',event,condition,value,
+        self._file_saved('TFR',event,condition,value,
                          data_type=data_type,keyword=keyword)
-       if compressed:
-           np.savez_compressed(self._fname('analyses','tfr','npz',
-                                           event,condition,value,
-                                           data_type,keyword),
-                               tfr=tfr,frequencies=frequencies,
+        fname1 = self._fname('analyses','tfr','npy',event,
+                             condition,value,data_type,keyword)
+        fname1b = self._fname('analyses','tfr_params','npz',event,
+                              condition,value,data_type,keyword)
+        fname2 = self._fname('analyses','tfr','npz',event,
+                             condition,value,data_type,keyword)
+        if compressed:
+            np.savez_compressed(fname2,tfr=tfr,frequencies=frequencies,
                                n_cycles=n_cycles)
-       else:
-           np.save(self._fname('analyses','tfr','npy',
-                               event,condition,value,
-                               data_type,keyword),tfr)
-           np.savez_compressed(self._fname('analyses','tfr_params','npz',
-                                           event,condition,value,
-                                           data_type,keyword),
-                               frequencies=frequencies,n_cycles=n_cycles)
+            if op.isfile(fname1) and op.isfile(fname1b):
+                os.remove(fname1)
+                os.remove(fname1b)
+        else:
+            np.save(fname1,tfr)
+            np.savez_compressed(fname1b,frequencies=frequencies,
+                               n_cycles=n_cycles)
+            if op.isfile(fname2):
+                os.remove(fname2)
 
 
-    def _has_CPT(self,event,condition,value,
-                 data_type=None,keyword=None,
-                 tfr=False,band=None):
+    def _has_CPT(self,event,condition,value,band=None,
+                 data_type=None,keyword=None):
         return op.isfile(self._fname('analyses','CPT','npz',
-                         event,condition,value,
-                         data_type,keyword,band,
-                         'tfr' if tfr else None))
+                                     event,condition,value,
+                                     band,data_type,keyword))
 
 
-    def _load_CPT(self,event,condition,value,
-                  data_type=None,keyword=None,
-                  tfr=False,band=None):
-        if self._has_CPT(event,condition,value,
-                         data_type=data_type,keyword=keyword,
-                         tfr=tfr,band=band):
+    def _load_CPT(self,event,condition,value,band=None,
+                  data_type=None,keyword=None):
+        if self._has_CPT(event,condition,value,band=band,
+                         data_type=data_type,keyword=keyword):
             f = np.load(self._fname('analyses','CPT','npz',
-                        event,condition,value,
-                        data_type,keyword,band,
-                        'tfr' if tfr else None))
-            self._file_loaded('Cluster Permutation Test',band,tfr,
-                              event=event,condition=condition,value=value,
+                                    event,condition,value,band,
+                                    data_type,keyword))
+            self._file_loaded('Cluster Permutation Test',event=event,
+                              condition=condition,value=value,
                               data_type=data_type,keyword=keyword)
-            if band:
-                return f['clusters'],f['cluster_p_values'],f['band']
-            elif tfr:
-                return f['clusters'],f['cluster_p_values'],f['frequencies']
-            else:
-                return f['clusters'],f['cluster_p_values']
+            return (f['clusters'],f['cluster_p_values'],f['times'],
+                    f['ch_dict'],f['frequencies'],f['band'])
         else:
             self._no_file_error('Cluster Permutation Test',band,tfr,
                                 event=event,condition=condition,value=value,
                                 data_type=data_type,keyword=keyword)
 
 
-    def _save_CPT(self,event,condition,value,clusters,cluster_p_values,
-                  times,frequencies=None,band=None):
-        self._file_saved('Cluster Permutation Test',band,tfr,
+    def _save_CPT(self,clusters,cluster_p_values,times,ch_dict,frequencies,
+                  band,event,condition,value,data_type=None,keyword=None):
+        self._file_saved('Cluster Permutation Test',band,
                          event=event,condition=condition,value=value,
                          data_type=data_type,keyword=keyword)
         fname = self._fname('analyses','CPT','npz',event,condition,value,
-                            data_type,keyword,band,'tfr' if tfr else None)
-        np.savez_compressed(fname,clusters=clusters,
+                            band,data_type,keyword)
+        np.savez_compressed(fname,clusters=clusters,ch_dict=ch_dict,
                             frequencies=(frequencies if 
                                 frequencies is not None else []),
                             cluster_p_values=cluster_p_values,
@@ -587,7 +583,7 @@ class MEEGbuddy:
 
 
     def _load_source(self,event,condition,value,keyword=None,fs_av=False):
-        fname = self._fname('sources','source-lh','stc',keyword,
+        fname = self._fname('source_estimates','source-lh','stc',keyword,
                             event,condition,value,'fs_av'*fs_av)
         if self._has_source(event,condition,value,keyword=keyword,fs_av=fs_av):
             self._file_loaded('Source',fs_av,event=event,condition=condition,
@@ -1191,35 +1187,6 @@ class MEEGbuddy:
         return n_events2
 
 
-    def demeanEpochs(self,event,condition,values=None,keyword_in=None,
-                     keyword_out=None):
-        values = self._default_values(condition,values=values)
-        bl_epochs = self._load_epochs('Baseline',keyword=keyword_in)
-
-        bl_value_indices = self._get_indices(bl_epochs,condition,values)
-        bl_values_dict = self._get_data(bl_epochs,values,bl_value_indices,
-                                        tmin=None,tmax=None,mean_and_std=False)
-
-        epochs = self._load_epochs(event,keyword=keyword_in)
-        value_indices = self._get_indices(epochs,condition,values)
-        epochs_data = epochs.get_data()
-
-        for value in values:
-            baseline_data = bl_values_dict[value]
-            baseline_arr = baseline_data.mean(axis=0).mean(axis=1) #average over epochs and times
-            indices = value_indices[value]
-            baseline_arr = np.tile(baseline_arr[np.newaxis,:,np.newaxis],
-                                   (len(indices),1,epochs_data.shape[2]))
-            epochs_data[indices] = epochs_data[indices] - baseline_arr
-        event_ch,tmin,tmax = self.events[event]
-
-        epochs_demeaned = EpochsArray(epochs_data,epochs.info,
-                                      events=epochs.events,verbose=False,
-                                      proj=False,tmin=epochs.tmin)
-        self._save_epochs(epochs_demeaned,event,keyword=keyword_out)
-        self._save_epochs(bl_epochs,'Baseline',keyword=keyword_out)
-
-
     def plotEpochs(self,event,n_epochs=20,n_channels=20,scalings=None,
                    tmin=None,tmax=None,l_freq=None,h_freq=None,
                    keyword_in=None,keyword_out=None,overwrite=False):
@@ -1328,6 +1295,7 @@ class MEEGbuddy:
         values = self._default_values(condition,values,contrast)
         value_indices = self._get_indices(epochs,condition,values)
         tmin,tmax = self._default_t(event,tmin,tmax)
+        epochs = epochs.crop(tmin=tmin,tmax=tmax)
         times = self._get_times(epochs,event,tmin=tmin,tmax=tmax)
         info = epochs.info
         band_title = '%s ' %(band_struct[0]) if band_struct is not None else ''
@@ -1339,7 +1307,7 @@ class MEEGbuddy:
                                    tind,band=band_struct,mean_and_std=False,
                                    band_mean=False)
         else:
-            values_dict = self._get_data(epochs,values,value_indices,tmin,tmax,
+            values_dict = self._get_data(epochs,values,value_indices,
                                          mean_and_std=False)
             frequencies = None
         if contrast:
@@ -1503,7 +1471,6 @@ class MEEGbuddy:
             epochs = self._load_epochs(event,keyword=keyword)
         else:
             epochs = epochs.copy()
-        epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
         if l_freq is not None or h_freq is not None:
             epochs = epochs.filter(l_freq=l_freq,h_freq=h_freq)
         epochs = epochs.crop(tmin=tmin,tmax=tmax)
@@ -1704,12 +1671,7 @@ class MEEGbuddy:
         return values_dict,frequencies
 
 
-    def _get_data(self,epochs,values,value_indices,tmin,tmax,mean_and_std=True):
-        if type(tmin) is dict:
-            tmin = min(tmin.values())
-        if type(tmax) is dict:
-            tmax = max(tmax.values())
-        epochs = epochs.copy().crop(tmin=tmin,tmax=tmax)
+    def _get_data(self,epochs,values,value_indices,mean_and_std=True):
         epochs_data = epochs.get_data()
         if mean_and_std:
             epochs_std = epochs_data.std(axis=0)
@@ -1766,8 +1728,9 @@ class MEEGbuddy:
 
     def _plotter_main(self,event,condition,values,keyword=None,
                       aux=False,butterfly=False,contrast=False,
-                      tfr=False,band=None,tfr_keyword=None,tmin=None,tmax=None,
-                      vmin=None,vmax=None,show=True):
+                      tfr=False,band=None,tfr_keyword=None,
+                      tmin=None,tmax=None,vmin=None,vmax=None,
+                      cpt=False,cpt_keyword=None,show=True):
         heatmap = tfr and band is None
         epochs = self._load_epochs(event,keyword=keyword)
         values = self._default_values(condition,values,contrast)
@@ -1787,28 +1750,44 @@ class MEEGbuddy:
                     self._get_tfr_data(event,condition,values,tfr_keyword,
                                        value_indices,tind,band=band,data_type=dt)
             else:
-                values_dict = self._get_data(epo,values,value_indices,tmin,tmax)
+                values_dict = self._get_data(epo,values,value_indices)
                 frequencies = None
             if contrast:
                 epochs_mean0,epochs_std0 = values_dict[values[0]]
                 epochs_mean1,epochs_std1 = values_dict[values[1]]
                 epochs_std = np.sqrt(epochs_std0**2 + epochs_std1**2)
                 epochs_mean = epochs_mean1-epochs_mean0
+                if cpt:
+                    clusters,cluster_p_values,times,ch_dict,frequencies,band = \
+                        self._load_CPT(event,condition,
+                                       '%s-%s' %(values[0],values[1]),
+                                       data_type=dt,keyword=cpt_keyword)
+                else:
+                    clusters,cluster_p_values = None,None
                 self._plot_decider(epochs_mean,epochs_std,times,axs,fig,butterfly,
                                    contrast,values,ch_dict,tfr,band,frequencies,
-                                   vmin,vmax)
+                                   vmin,vmax,clusters,cluster_p_values)
             else:
                 for i,value in enumerate(values):
                     epochs_mean,epochs_std = values_dict[value]
+                    if cpt:
+                        clusters,cluster_p_values,times,ch_dict,frequencies,band = \
+                            self._load_CPT(event,condition,value,
+                                           data_type=dt,
+                                           keyword=cpt_keyword)
+                    else:
+                        clusters,cluster_p_values = None,None
                     if butterfly:
                         axs[i].set_title(value)
                         self._plot_decider(epochs_mean,epochs_std,times,axs[i],fig,
                                            butterfly,contrast,values,ch_dict,tfr,
-                                           band,frequencies,vmin,vmax)
+                                           band,frequencies,vmin,vmax,clusters,
+                                           cluster_p_values)
                     else:
                         self._plot_decider(epochs_mean,epochs_std,times,axs,fig,
                                            butterfly,contrast,values,ch_dict,tfr,
-                                           band,frequencies,vmin,vmax)
+                                           band,frequencies,vmin,vmax,clusters,
+                                           cluster_p_values)
             if not (heatmap or butterfly):
                 if contrast:
                     self._add_last_square_legend(fig,'%s-%s' %(values[0],values[1]))
@@ -1816,13 +1795,13 @@ class MEEGbuddy:
                     self._add_last_square_legend(fig,*values)
 
             self._prepare_fig(fig,event,condition,values,aux=aux,butterfly=butterfly,
-                              contrast=contrast,tfr=tfr,band=band,keyword=keyword,
-                              data_type=dt,show=show)
+                              contrast=contrast,cpt=cpt,tfr=tfr,band=band,
+                              keyword=keyword,data_type=dt,show=show)
 
 
     def _plot_decider(self,epochs_mean,epochs_std,times,axs,fig,butterfly,
                       contrast,values,ch_dict,tfr,band,frequencies,vmin,vmax,
-                      clusters=None,cluster_p_values=None):
+                      clusters,cluster_p_values):
         vmin,vmax = self._default_vs(epochs_mean[list(ch_dict.keys())],
                                      epochs_std[list(ch_dict.keys())],vmin,vmax)
         if tfr:
@@ -1842,7 +1821,7 @@ class MEEGbuddy:
 
 
     def _plot_voltage(self,epochs_mean,epochs_std,times,axs,butterfly,ch_dict,
-                      vmin,vmax,clusters=None,cluster_p_values=None):
+                      vmin,vmax,clusters,cluster_p_values):
         for i,ch in enumerate(ch_dict):
             if butterfly:
                 ax = axs
@@ -1868,8 +1847,7 @@ class MEEGbuddy:
 
 
     def _plot_heatmap(self,epochs_mean,epochs_std,times,axs,fig,butterfly,
-                      ch_dict,frequencies,vmin,vmax,clusters=None,
-                      cluster_p_values=None):
+                      ch_dict,frequencies,vmin,vmax,clusters,cluster_p_values):
         cmap = plt.get_cmap('cool')
         norm = SymLogNorm(vmax/10,vmin=vmin,vmax=vmax)
         tmin,tmax = times.min(),times.max()
@@ -1906,7 +1884,7 @@ class MEEGbuddy:
 
 
     def _plot_band(self,epochs_mean,epochs_std,times,axs,ch_dict,butterfly,
-                   vmin,vmax,clusters=None,cluster_p_values=None):
+                   vmin,vmax,clusters,cluster_p_values):
         for i,ch in enumerate(ch_dict):
             if butterfly:
                 ax = axs
@@ -1933,7 +1911,7 @@ class MEEGbuddy:
 
     def _prepare_fig(self,fig,event,condition,values,aux=False,
                      butterfly=False,contrast=False,tfr=False,band=None,
-                     keyword=None,data_type=None,show=True):
+                     cpt=False,keyword=None,data_type=None,show=True):
         if tfr:
             if band:
                 ylabel = 'Relative Abundance'
@@ -1953,15 +1931,17 @@ class MEEGbuddy:
         else:
             bandname = ''
         fig.suptitle(title)
-        fig.savefig(self._fname('plots','plot','jpg',contrast*'contrast',
-                                'tfr'*tfr,'aux'*aux,'butterfly'*butterfly,
+        fig.savefig(self._fname('plots','plot','jpg',
+                                contrast*'contrast','tfr'*tfr,'cpt'*cpt,
+                                'aux'*aux,'butterfly'*butterfly,
                                 (bandname + '_band')*(band is not None),
                                 keyword,data_type,event,condition,*values))
         self._show_fig(fig,show)
 
 
     def makeWavelets(self,event,condition,values=None,keyword_in=None,
-                     keyword_out=None,fmin=3,fmax=35,nmin=3,nmax=10,steps=32,
+                     keyword_out=None,tmin=None,tmax=None,
+                     fmin=4,fmax=100,nmin=2,nmax=50,steps=32,
                      compressed=False,normalize=True,save_baseline=False,
                      overwrite=False):
         keyword_out = keyword_in if keyword_out is None else keyword_out
@@ -1970,19 +1950,20 @@ class MEEGbuddy:
         frequencies = np.logspace(np.log10(fmin),np.log10(fmax),steps)
         n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
         epochs = self._load_epochs(event,keyword=keyword_in)
-        _,tmin,tmax = self.events[event]
+        tmin,tmax = self._default_t(event,tmin=tmin,tmax=tmax,buffered=True)
+        epochs = epochs.crop(tmin=tmin,tmax=tmax)
         times = self._get_times(epochs,event)
         value_indices = self._get_indices(epochs,condition,values)
-        values_dict = self._get_data(epochs,values,value_indices,tmin-self.tbuffer,
-                                     tmax+self.tbuffer,mean_and_std=False)
+        values_dict = self._get_data(epochs,values,value_indices,
+                                     mean_and_std=False)
         if normalize:
             bl_epochs = self._load_epochs('Baseline',keyword=keyword_in)
             _,bl_tmin,bl_tmax = self.baseline
+            bl_epochs = bl_epochs.crop(tmin=bl_tmin,tmax=bl_tmax)
             bl_times = self._get_times(bl_epochs,'Baseline')
             bl_value_indices = self._get_indices(bl_epochs,condition,values)
             bl_values_dict = self._get_data(bl_epochs,values,bl_value_indices,
-                                            bl_tmin-self.tbuffer,
-                                            bl_tmax+self.tbuffer,mean_and_std=False)
+                                            mean_and_std=False)
         data_types = self._get_data_types()
         for dt in data_types:
             print(dt)
@@ -2145,111 +2126,102 @@ class MEEGbuddy:
         df.to_csv(self.behavior)
 
 
-    def CPTByBand(self,event,condition,values=None,keyword=None,
-                  tfr_keyword=None,tmin=None,tmax=None,threshold=6.0,aux=False,
+    def CPTByBand(self,event,condition,values=None,keyword_in=None,
+                  keyword_out=None,tfr_keyword=None,
+                  tmin=None,tmax=None,threshold=6.0,aux=False,
                   bands={'theta':(4,8),'alpha':(8,15),'beta':(15,30)},
                   contrast=True):
         for band in bands:
             fmin,fmax = bands[band]
             band_struct = (band,fmin,fmax)
-            self.CPT(event,condition,values,keyword=keyword,
-                     tfr_keyword=tfr_keyword,tmin=tmin,tmax=tmax,tfr=True,
-                     threshold=threshold,band=band_struct,contrast=contrast,
-                     aux=aux)
+            self.CPT(event,condition,values,keyword=keyword_in,
+                     keyword_out=keyword_out,tfr_keyword=tfr_keyword,
+                     tmin=tmin,tmax=tmax,tfr=True,threshold=threshold,
+                     band=band_struct,contrast=contrast,aux=aux)
 
 
-    def sourceCPT(self,event,condition,values=None,keyword=None,
-                  tmin=None,tmax=None,threshold=4.0,contrast=False,
-                  aux=False,n_permutations=1000,n_jobs=10):
-        alpha = 0.3
-        values = self._default_values(condition,values,contrast)
-        tmin,tmax = self._default_t(event,tmin,tmax)
-        if contrast:
-            source_data0 = self._load_source(event,condition,values[0],keyword=keyword)
-            source_data1 = self._load_source(event,condition,values[1],keyword=keyword)
-            clusters,cluster_p_values = \
-                    self._CPT(source_data0,source_data1,threshold,ch_dict,
-                              n_permutations=n_permutations,n_jobs=n_jobs)
-            self._save_CPT(event,condition,'%s-%s' %(values[0],values[1]),
-                           clusters,cluster_p_values,times,
-                           frequencies=frequencies,band=band)
-        else:
-            for value in values:
-                source_data = self._load_source(event,condition,value,keyword=keyword)
-                bl_source_data,_ = self._load_source(event,condition,value,keyword=keyword)
-                bl_source_data = self._equalize_baseline_length(source_data,
-                                                                bl_source_data)
-                clusters,cluster_p_values = \
-                    self._CPT(source_data,bl_source_data,threshold,
-                              n_permutations=n_permutations,n_jobs=n_jobs)
-                self._save_CPT(event,condition,value,clusters,
-                               cluster_p_values,times,
-                               frequencies=frequencies,band=band)
-
-
-    def CPT(self,event,condition,values=None,keyword=None,tmin=None,tmax=None,
-            threshold=4.0,tfr=False,band=None,tfr_keyword=None,
-            contrast=False,n_permutations=1000,n_jobs=10):
-        # plot cluster perumation test
+    def CPT(self,event,condition,values=None,keyword_in=None,
+            keyword_out=None,tmin=None,tmax=None,aux=False,alpha=0.3,
+            threshold=6.0,tfr=False,band=None,tfr_keyword=None,
+            contrast=False,n_permutations=1000,n_jobs=10,overwrite=False):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
+        tfr_keyword = keyword_in if tfr_keyword is None else tfr_keyword
         heatmap = tfr and not band
         if heatmap:
             alpha = 1
-        else:
-            alpha = 0.3
         values = self._default_values(condition,values,contrast)
+        if all([self._has_CPT(event,condition,value=value,data_type=dt,
+                              keyword=keyword_out) for dt in self._get_data_types()
+                              for value in values]) and not overwrite:
+            self._overwrite_error('CPT',event=event,condition=condition,
+                                  keyword=keyword_out)
         tmin,tmax = self._default_t(event,tmin,tmax)
-        epochs = self._load_epochs(event,keyword=keyword)
-        epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
+        epochs = self._load_epochs(event,keyword=keyword_in)
+        epochs = epochs.crop(tmin=tmin,tmax=tmax)
         times = self._get_times(epochs,event,tmin=tmin,tmax=tmax)
         value_indices = self._get_indices(epochs,condition,values)
         if not contrast:
-            bl_epochs = self._load_epochs('Baseline',keyword=keyword)
+            bl_epochs = self._load_epochs('Baseline',keyword=keyword_in)
+            _,bl_tmin,bl_tmax = self.baseline
+            bl_epochs = bl_epochs.crop(tmin=bl_tmin,tmax=bl_tmax)
             bl_value_indices = self._get_indices(bl_epochs,condition,values)
         ch_dict = self._get_ch_dict(epochs,aux=aux)
-        if tfr:
-            tind = np.array([i for i,t in enumerate(times) if
-                             t >= tmin and t<=tmax])
-            values_dict,frequencies = \
-                self._get_tfr_data(event,condition,values,tfr_keyword,value_indices,
-                                   tind,band=band,mean_and_std=False)
+        for dt in self._get_data_types():
+            this_epochs = epochs.copy().pick_types(meg=False if dt == 'eeg' else dt,
+                                                   eeg=(dt == 'eeg'))
             if not contrast:
-                bl_values_dict,bl_frequencies = \
-                    self._get_tfr_data('Baseline',condition,values,tfr_keyword,
-                                       bl_value_indices,t_ind,band=band)
-        else:
-            values_dict = self._get_data(epochs,values,value_indices,tmin,tmax)
-            if not contrast:
-                bl_values_dict = self._get_data(bl_epochs,values,bl_value_indices,
-                                                tmin,tmax)
-            frequencies = None
-        if contrast:
-            epochs_data0 = values_dict[values[0]]
-            epochs_data1 = values_dict[values[1]]
-            clusters,cluster_p_values = \
-                    self._CPT(epochs_data0,epochs_data1,threshold,
-                              n_permutations=n_permutations,n_jobs=n_jobs)
-            self._save_CPT(event,condition,'%s-%s' %(values[0],values[1]),
-                           clusters,cluster_p_values,times,
-                           frequencies=frequencies,band=band)
-        else:
-            for value in values:
-                evo_data,_ = values_dict[value]
-                bl_evo_data,_ = bl_values_dict[value]
-                bl_evo_data = self._equalize_baseline_length(evo_data,bl_evo_data)
+                this_bl_epochs = bl_epochs.copy().pick_types(
+                    meg=False if dt == 'eeg' else dt,eeg=(dt == 'eeg'))
+            if tfr:
+                tind = np.array([i for i,t in enumerate(times) if
+                                 t >= tmin and t<=tmax])
+                values_dict,frequencies = \
+                    self._get_tfr_data(event,condition,values,
+                                       tfr_keyword,value_indices,
+                                       tind,band=band,mean_and_std=False,
+                                       data_type=dt)
+                if not contrast:
+                    bl_values_dict,bl_frequencies = \
+                        self._get_tfr_data('Baseline',condition,values,
+                                           tfr_keyword,bl_value_indices,
+                                           tind,band=band,data_type=dt)
+            else:
+                values_dict = self._get_data(this_epochs,values,
+                                             value_indices,mean_and_std=False)
+                if not contrast:
+                    bl_values_dict = self._get_data(this_bl_epochs,values,
+                                                    bl_value_indices,
+                                                    mean_and_std=False)
+                frequencies = None
+            if contrast:
+                epochs_data0 = values_dict[values[0]]
+                epochs_data1 = values_dict[values[1]]
                 clusters,cluster_p_values = \
-                    self._CPT(evo_data,bl_evo_data,threshold,
-                              n_permutations=n_permutations,n_jobs=n_jobs)
-                self._save_CPT(event,condition,value,clusters,
-                               cluster_p_values,times,
-                               frequencies=frequencies,band=band)
+                        self._CPT(epochs_data0,epochs_data1,threshold,
+                                  n_permutations=n_permutations,n_jobs=n_jobs)
+                self._save_CPT(clusters,cluster_p_values,times,ch_dict,
+                               frequencies,band,event,condition,
+                               '%s-%s' %(values[0],values[1]),
+                               keyword=keyword_out)
+            else:
+                for value in values:
+                    evo_data = values_dict[value]
+                    bl_evo_data = bl_values_dict[value]
+                    bl_evo_data = self._equalize_baseline_length(evo_data,bl_evo_data)
+                    clusters,cluster_p_values = \
+                        self._CPT(evo_data,bl_evo_data,threshold,
+                                  n_permutations=n_permutations,n_jobs=n_jobs)
+                    self._save_CPT(clusters,cluster_p_values,times,ch_dict,
+                                   frequencies,band,event,condition,
+                                   value,keyword=keyword_out)
 
 
-    def _equalize_baseline_length(value_data,bl_data):
+    def _equalize_baseline_length(self,value_data,bl_data):
         bl_len = bl_data.shape[-1]
         val_len = value_data.shape[-1]
         if bl_len < val_len:
-            n_reps = val_len/bl_len
-            remainder = val_len% bl_len
+            n_reps = int(val_len/bl_len)
+            remainder = val_len%bl_len
             print('Using %.2f ' %(n_reps + float(remainder)/bl_len) +
                   'repetitions of the baseline period for permuation')
             baseline = np.tile(bl_data,n_reps)
@@ -2258,7 +2230,7 @@ class MEEGbuddy:
                                          axis=-1)
                               #take from the end of the baseline period
             bl_data = np.concatenate((baseline,remainder_baseline),axis=-1)
-        elif bl_len > ep_len:
+        elif bl_len > val_len:
             bl_data = np.take(bl_data,range(val_len),axis=-1)
         return bl_data
 
@@ -2266,9 +2238,42 @@ class MEEGbuddy:
     def _CPT(self,data0,data1,threshold,n_permutations=1000,n_jobs=10):
         T_obs, clusters, cluster_p_values, H0 = \
         permutation_cluster_test([data0,data1],n_permutations=n_permutations,
-                                  threshold=threshold,tail=0,n_jobs=n_jobs,
-                                  buffer_size=None,verbose=False)
+                                  threshold=threshold,tail=0 if threshold else None,
+                                  n_jobs=n_jobs,buffer_size=None,verbose=False)
         return clusters,cluster_p_values
+
+
+    def plotCPT(self,event,condition,values=None,keyword_in=None,
+                keyword_out=None,aux=False,vmin=None,vmax=None,
+                show=True): #LOOK INTO CONTRAST
+        self._plotter_main(event,condition,values,aux=aux,
+                           keyword=keyword_in,cpt_keyword=keyword_out,
+                           vmin=vmin,vmax=vmax,show=show)
+
+
+    def plotCPTTFR(self,event,condition,values=None,keyword_in=None,
+                   keyword_out=None,aux=False,vmin=None,vmax=None,
+                   tfr_keyword=None,
+                   bands={'theta':(4,8),'alpha':(8,15),'beta':(15,30)},
+                   show=True):
+        # TO D
+        tfr_keyword = keyword if tfr_keyword is None else tfr_keyword
+        if bands:
+            for band in bands:
+                print(band + ' band')
+                fmin,fmax = bands[band]
+                band_struct = (band,fmin,fmax)
+                self._plotter_main(event,condition,values,contrast=contrast,
+                                   aux=aux,keyword=keyword,butterfly=butterfly,
+                                   tfr=True,band=band_struct,tfr_keyword=tfr_keyword,
+                                   tmin=tmin,tmax=tmax,vmin=vmin,vmax=vmax)
+        else:
+            values = self._default_values(condition,values,contrast)
+            for value in values:
+                self._plotter_main(event,condition,[value],contrast=contrast,
+                                   aux=aux,keyword=keyword,butterfly=butterfly,
+                                   tfr=True,band=None,tfr_keyword=tfr_keyword,
+                                   tmin=tmin,tmax=tmax,vmin=vmin,vmax=vmax)
 
 
     def plotControlVariables(self,conditions=None,show=True):
@@ -2570,7 +2575,6 @@ class MEEGbuddy:
         tmin,tmax = self._default_t(event,tmin,tmax)
         epochs = self._load_epochs(event,keyword=keyword)
         epochs = epochs.crop(tmin=tmin,tmax=tmax)
-        epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=True,verbose=False)
@@ -2809,7 +2813,7 @@ class MEEGbuddy:
                      f >= bands[band][0] and f <= bands[band][1]]}
         n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
         keyword_out = keyword_in if keyword_out is None else keyword_out
-        fname = self._fname('source_estimates','bootstrap','npz',event,keyword_out)
+        fname = self._fname('analyses','bootstrap','npz',event,keyword_out)
         if os.path.isfile(fname) and not overwrite:
             raise ValueError('Bootstraps already exist, use overwrite=True')
         np.random.seed(seed)
@@ -2851,7 +2855,7 @@ class MEEGbuddy:
         maxs = range(batch,Nboot+1,batch)
         for i_min,i_max in zip(mins,maxs):
             print('Computing bootstraps %i to %i' %(i_min,i_max))
-            fname2 = self._fname('source_estimates','bootstrap','npz',
+            fname2 = self._fname('analyses','bootstrap','npz',
                                 '%i-%i' %(i_min,i_max),event,keyword_out)
             if os.path.isfile(fname2) and not overwrite:
                 continue
@@ -2879,13 +2883,13 @@ class MEEGbuddy:
             np.savez_compressed(fname2,stcs=stcs)
             if tfr:
                 for band in bands:
-                    fname3 = self._fname('source_estimates',
+                    fname3 = self._fname('analyses',
                                          'bootstrap_power_%s' %(band),
                                          'npz','%i-%i' %(i_min,i_max),event,
                                          keyword_out)
                     np.savez_compressed(fname3,powers=powers[band])
                     if itc:
-                        fname4 = self._fname('source_estimates',
+                        fname4 = self._fname('analyses',
                                              'bootstrap_itc_%s' %(band),
                                              'npz','%i-%i' %(i_min,i_max),event,
                                              keyword_out)
@@ -2909,9 +2913,9 @@ class MEEGbuddy:
             normalization issues.
             n_permutations = 1000 takes ~5 hours with tfr'''
         keyword_out = keyword_in if keyword_out is None else keyword_out
-        fname_in = self._fname('source_estimates','bootstrap','npz',event,
+        fname_in = self._fname('analyses','bootstrap','npz',event,
                                keyword_in)
-        fname_out = self._fname('source_estimates','correlation','npz',event,
+        fname_out = self._fname('analyses','correlation','npz',event,
                                 keyword_in)
         if not os.path.isfile(fname_in):
             raise ValueError('Bootstraps must be computed first' +
@@ -2969,7 +2973,7 @@ class MEEGbuddy:
         maxs = range(batch,Nboot+1,batch)
         for i_min,i_max in zip(mins,maxs):
             print('Combining bootstraps %i to %i source' %(i_min,i_max),end='')
-            fname2 = self._fname('source_estimates','bootstrap','npz',
+            fname2 = self._fname('analyses','bootstrap','npz',
                                  '%i-%i' %(i_min,i_max),event,keyword_out)
             stcs2 = np.load(fname2)['stcs']
             for i,j in enumerate(range(i_min,i_max)):
@@ -2978,14 +2982,14 @@ class MEEGbuddy:
             if tfr:
                 for band in bands:
                     print(' %s tfr' %(band), end='')
-                    fname3 = self._fname('source_estimates',
+                    fname3 = self._fname('analyses',
                                          'bootstrap_power_%s' %(band),
                                          'npz','%i-%i' %(i_min,i_max),event,
                                          keyword_out)
                     powers2 = np.load(fname3)['powers']
                     if itc:
                         print(' %s itc' %(band), end='')
-                        fname4 = self._fname('sources','bootstrap_itc_%s' %(band),
+                        fname4 = self._fname('analyses','bootstrap_itc_%s' %(band),
                                              'npz','%i-%i' %(i_min,i_max),event,
                                              keyword_out)
                         itcs2 = np.load(fname4)['itcs']
@@ -3078,7 +3082,6 @@ class MEEGbuddy:
         keyword_out = keyword_in if keyword_out is None else keyword_out
         tmin,tmax = self._default_t(event,tmin,tmax)
         epochs = self._load_epochs(event,keyword=keyword_in)
-        epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
         epochs = epochs.crop(tmin=min([tmin,bl_tmin]),tmax=max([tmax,bl_tmax]))
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
@@ -3353,7 +3356,6 @@ class MEEGbuddy:
         keyword_out = keyword_in if keyword_out is None else keyword_out
         tmin,tmax = self._default_t(event,tmin,tmax)
         epochs = self._load_epochs(event,keyword=keyword_in)
-        epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
         epochs = epochs.crop(tmin=min([tmin,bl_tmin]),tmax=max([tmax,bl_tmin]))
         sfreq = epochs.info['sfreq']
         if self.eeg:
