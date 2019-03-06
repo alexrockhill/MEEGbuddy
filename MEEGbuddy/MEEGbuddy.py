@@ -1757,6 +1757,7 @@ class MEEGbuddy:
         for dt in self._get_data_types():
             epo = self._pick_types(epochs,dt)
             ch_dict = self._get_ch_dict(epo,aux=aux)
+            fig,axs = self._setup_plot(ch_dict,butterfly=butterfly,values=values)
             if tfr:
                 tind = np.intersect1d(np.where(tmin<=epochs.times),
                                       np.where(epochs.times<=tmax))
@@ -1767,7 +1768,6 @@ class MEEGbuddy:
                 values_dict = self._get_data(epo,values,value_indices)
                 frequencies = None
             if contrast:
-                fig,axs = self._setup_plot(ch_dict,butterfly=butterfly,values=values)
                 epochs_mean0,epochs_std0 = values_dict[values[0]]
                 epochs_mean1,epochs_std1 = values_dict[values[1]]
                 epochs_std = np.sqrt(epochs_std0**2 + epochs_std1**2)
