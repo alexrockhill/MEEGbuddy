@@ -97,8 +97,8 @@ class MEEGbuddy:
     All data is saved automatically in BIDS-inspired format.
     '''
     def __init__(self, subject=None, session=None, fdata=None, behavior=None,
-                 baseline=None, stimuli=None, eeg=False, meg=False,
-                 response=None, task=None, no_response=None,
+                 baseline=None, stimuli=None, eeg=False, meg=False, ecog=False,
+                 seeg=False, response=None, task=None, no_response=None,
                  exclude_response=None, tbuffer=1, subjects_dir=None,
                  epochs=None, event=None, fs_subjects_dir=None, bemf=None,
                  srcf=None, transf=None, preload=True, seed=551832, file=None):
@@ -144,6 +144,8 @@ class MEEGbuddy:
 
             meta_data['MEG'] = meg
             meta_data['EEG'] = eeg
+            meta_data['ECOG'] = ecog
+            meta_data['SEEG'] = seeg
 
             if subject is None:
                 raise ValueError('Subject name is required to differentiate subjects')
@@ -259,6 +261,8 @@ class MEEGbuddy:
             self.response = meta_data['Response']
             self.eeg = meta_data['EEG']
             self.meg = meta_data['MEG']
+            self.ecog = meta_data['ECOG']
+            self.seeg = meta_data['SEEG']
             self.task = meta_data['Task']
             self.no_response = meta_data['No Response']
             self.exclude_response = meta_data['Exclude Response']
@@ -398,7 +402,7 @@ class MEEGbuddy:
                              verbose=False,preload=True)
         self._file_loaded('Epochs',event=event,keyword=keyword)
         epochs._data = epochs._data.astype('float64') # mne bug work-around
-        epochs = epochs.pick_types(meg=self.meg,eeg=self.eeg)
+        epochs = self._pick_types(epochs)
         return epochs
 
 
@@ -699,7 +703,8 @@ class MEEGbuddy:
 
 
     def _get_data_types(self):
-        return ['grad','mag']*self.meg + ['eeg']*self.eeg
+        return (['grad','mag']*self.meg + ['eeg']*self.eeg + 
+                ['ecog']*self.ecog + ['seeg']*self.seeg)
 
 
     def raw2mat(self,keyword=None,ch=None):
@@ -1119,6 +1124,7 @@ class MEEGbuddy:
             epochs = self._load_epochs(event,keyword=keyword_in)
             epochs = epochs.resample(new_sfreq,npad=npad,window=window,
                                      n_jobs=n_jobs)
+            self._save_epochs(epochs,event,keyword=keyword_out)
 
     def makeEpochs(self,keyword_in=None,keyword_out=None,detrend=0,
                    normalized=True,overwrite=False):
@@ -1191,7 +1197,6 @@ class MEEGbuddy:
                                  '%i responses + %i excluded responses ' %(n_events2,diff) +
                                  'doesn\'t add up')
             events[:,2] = response_events
-
         else:
             exclude = self.exclude_response
             if n_events is not None and n_events2 != n_events:
@@ -1750,9 +1755,20 @@ class MEEGbuddy:
         ax.legend(loc='center')
 
 
-    def _pick_types(self,epochs,dt):
-        return epochs.copy().pick_types(meg=dt if dt != 'eeg' else False,
-                                        eeg=True if dt == 'eeg' else False)
+    def _exclude_unpicked_types(self,inst):
+        return inst.pick_types(meg=self.meg,eeg=self.eeg,eog=True,
+                                   ecg=True,emg=True,stim=True,ref_meg=True,
+                                   misc=True,resp=True,chpi=True,
+                                   exci=True,ias=True,system=True,seeg=True,
+                                   dipole=True,gof=True,bio=True,ecog=True,
+                                   fnirs=True,exclude=[])
+
+
+    def _pick_types(self,inst,dt):
+        return inst.copy().pick_types(meg=dt if dt in ['grad','mag'] else False,
+                                      eeg=True if dt == 'eeg' else False,
+                                      ecog=True if dt == 'ecog' else False,
+                                      seeg=True if dt=='seeg' else False)
 
 
     def _plotter_main(self,event,condition,values,keyword=None,
@@ -3443,17 +3459,46 @@ class MEEGbuddy:
                 data_dict)
 
 
+    def _has_wc(self,event,condition,value,keyword=None):
+        fname = self._fname('analyses','WaveletConnectivity',
+                            'npz',keyword,event,condition,value)
+        return op.isfile(fname)
+
+
+    def _load_wc(self,event,condition,value,keyword=None):
+        fname = self._fname('analyses','WaveletConnectivity',
+                            'npz',keyword,event,condition,value)
+        if os.path.isfile(fname):
+            self._file_loaded('Wavelet Connectivity',event=event,
+                              condition=condition,
+                              value=value,keyword=keyword)
+            f = np.load(fname)
+        else:
+            self._no_file_error('PCI',event=event,condition=condition,
+                                value=value,keyword=keyword)
+        return f['con']
+
+
+    def _save_wc(self,con,event,condition,value,keyword=None):
+        self._file_saved('Wavelet Connectivity',event=event,
+                         condition=condition,value=value,keyword=keyword)
+        fname = self._fname('analyses','WaveletConnectivity','npz',
+                            keyword,event,condition,value)
+        np.savez_compressed(fname,con=con)
+
+
     def waveletConnectivity(self,event,condition,values=None,
                             keyword_in=None,keyword_out=None,downsample=True,
-                            seed=13,av_con_per_time=10,min_dist=0.05,
+                            seed=13,threshold=0.05,min_dist=0.05,
                             tmin=None,tmax=None,fmin=4,fmax=150,
                             nmin=2,nmax=75,steps=32,gif_combine=True,
-                            method='pli',tube_radius=0.001,
-                            n_jobs=5,stc=True,fps=60,resample_freq=100,
+                            method='pli',tube_radius=0.001,time_dilation=10,
+                            n_jobs=5,stc=True,fps=20,resample_freq=100,
                             bands={'theta':(4,8),'alpha':(8,15),
                                    'beta':(15,30),'low-gamma':(30,80),
                                    'high-gamma':(80,150)},
-                            views=['lat','med','cau','dor','ven','fro','par']):
+                            views=['lat','cau','dor','ven','fro','par'],
+                            cmap='YlOrRd',overwrite=False):
         if downsample:
             np.random.seed(seed)
         keyword_out = keyword_in if keyword_out is None else keyword_out
@@ -3484,7 +3529,10 @@ class MEEGbuddy:
         for dt in self._get_data_types():
             epo = self._pick_types(epochs,dt)
             sens_loc = np.array([ch['loc'][:3] for ch in epo.info['chs']])
-
+            time_factor = int(len(epo.times)/(time_dilation*(tmax-tmin)*fps))
+            if time_factor < 1:
+                raise ValueError('Too many frames per second and/or time dilation, ' + 
+                                 'not enough connectivity time points')
             for band_name,(fmin,fmax) in bands.items():
                 freqs = np.array([f for f in frequencies 
                                   if f >= fmin and f <= fmax])
@@ -3497,29 +3545,41 @@ class MEEGbuddy:
                                                            condition,value))
                         np.random.shuffle(indices)
                         indices = indices[:nTR]
-                    con,av_freqs,times,n_epochs,n_tapers = \
-                        spectral_connectivity(epo[indices],method=method,
-                                              mode='cwt_morlet',sfreq=sfreq,
-                                              fmin=fmin,fmax=fmax,faverage=True,
-                                              tmin=tmin,cwt_freqs=freqs,
-                                              cwt_n_cycles=n_cs,
-                                              n_jobs=n_jobs)
-                    con = con.squeeze()
+                    if (self._has_wc(event,condition,value,keyword_out) and 
+                        not overwrite):
+                        con = self._load_wc(event,condition,value,
+                                            keyword=keyword_out)
+                    else:
+                        con,av_freqs,times,n_epochs,n_tapers = \
+                            spectral_connectivity(epo[indices],method=method,
+                                                  mode='cwt_morlet',sfreq=sfreq,
+                                                  fmin=fmin,fmax=fmax,faverage=True,
+                                                  tmin=tmin,cwt_freqs=freqs,
+                                                  cwt_n_cycles=n_cs,
+                                                  n_jobs=n_jobs)
+                        con = con.squeeze()
+                        self._save_wc(con,event,condition,value,
+                                            keyword=keyword_out)
                     con_sorted = np.sort(con, axis=None)
-                    vmin = con_sorted[-av_con_per_time*len(epo.times)]
+                    vmin = con_sorted[-int(threshold/len(epo.times)*con.size)]
                     vmax = con_sorted[-1]
                     indices = np.where(con >= vmin)
                     nodes = {t:{} for t in range(len(epo.times))}
                     for i,j,t in zip(*indices):
                         if linalg.norm(sens_loc[i]-sens_loc[j]) > min_dist:
                             nodes[t][(i,j)] = con[i,j,t]
-                    gif_fnames = []
+                    gif_names = []
                     for view in views:
                         fig = mlab.figure(size=(600,600),bgcolor=(0.5, 0.5, 0.5))
+                        fig.scene._lift() #weird bug https://github.com/enthought/mayavi/issues/702
                         mlab.view(*view_to_mlab(view))
+                        scale_points = mlab.plot3d([0,1],[0,1],[0,1],[vmin,vmin],
+                                               vmin=vmin, vmax=vmax,
+                                               tube_radius=tube_radius,
+                                               colormap=cmap)
                         def make_frame(t):
                             mlab.clf()
-                            t_ind = int(t*(fps/(tmax-tmin)))
+                            t_ind = int(t*fps*time_factor)
                             pts = mlab.points3d(sens_loc[:, 0],
                                                 sens_loc[:, 1], 
                                                 sens_loc[:, 2],
@@ -3533,17 +3593,20 @@ class MEEGbuddy:
                                                      [z1, z2], [val, val],
                                                      vmin=vmin, vmax=vmax,
                                                      tube_radius=tube_radius,
-                                                     colormap='RdBu')
+                                                     colormap=cmap)
                                 points.module_manager.scalar_lut_manager.reverse_lut = True
-                            mlab.scalarbar(points,title=('Phase Lag Index (PLI), ' +
+                            mlab.scalarbar(scale_points,title=('Phase Lag Index (PLI), ' +
                                            'time=%.2f' %(epo.times[t_ind])),
                                            nb_labels=4)
                             return mlab.screenshot(antialiased=True)
 
-                        anim = mpy.VideoClip(make_frame,duration=tmax-tmin)
-                        anim.write_gif(self._fname('plots','connectivity','gif',
+                        anim = mpy.VideoClip(make_frame,duration=time_dilation*(tmax-tmin))
+                        fname = self._fname('plots','connectivity','gif',
                                                    event,condition,value,
-                                                   keyword_out,view),fps=fps)
+                                                   keyword_out,view)
+                        gif_names.append(fname)
+                        anim.write_gif(fname,fps=fps)
+                        mlab.close(fig)
                     if gif_combine:
                         print('Combining gifs for %s' %(value))
                         anim = combine_gifs(self._fname('plots','connectivity','gif',
@@ -3554,14 +3617,12 @@ class MEEGbuddy:
 
 def view_to_mlab(view):
     view_dict = {'dor':(-90,50,0.75,np.zeros((3,))),
-                 'lat':(0,0,0.75,np.zeros((3,))),
-                 'med':(-90,0,0.75,np.array([0.5,0,0])),
-                 'cau':(180,0,0.75,np.zeros((3,))),
-                 'ven':(90,-50,0.75,np.zeros((3,))),
-                 'fro':(-180,0,0.75,np.zeros((3,))),
+                 'lat':(5.6,85,0.75,np.zeros((3,))),
+                 'cau':(-85,90,0.75,np.zeros((3,))),
+                 'ven':(-138,177,0.75,np.zeros((3,))),
+                 'fro':(92,71,0.75,np.zeros((3,))),
                  'par':(45,50,0.75,np.zeros((3,)))}
     return view_dict[view]
-
 
 
 def create_demi_events(raw_fname, window_size, shift, epoches_nun=0,
@@ -3587,6 +3648,7 @@ def create_demi_events(raw_fname, window_size, shift, epoches_nun=0,
     demi_conditions = {'demi': 0}
     return demi_events, demi_conditions
 
+
 def loadMEEGbuddy(subjects_dir,subject,session=None,task=None,
                   eeg=True,meg=True):
     name = str(subject) + '_'
@@ -3598,6 +3660,7 @@ def loadMEEGbuddy(subjects_dir,subject,session=None,task=None,
         return MEEGbuddy(file=file)
     else:
         raise ValueError('%s file not found' %(file))
+
 
 def loadMEEGbuddies(subjects_dir,meg=None,eeg=None,task=None,shuffled=False,
                     seed=11):
@@ -3612,6 +3675,7 @@ def loadMEEGbuddies(subjects_dir,meg=None,eeg=None,task=None,shuffled=False,
         np.random.seed(seed)
         np.random.shuffle(mbs)
     return mbs
+
 
 def getMEEGbuddiesBySubject(subjects_dir,meg=None,eeg=None,task=None,
                             shuffled=False,seed=11):
