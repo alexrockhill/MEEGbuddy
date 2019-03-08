@@ -355,7 +355,7 @@ class MEEGbuddy:
             self._file_loaded('Raw',keyword=keyword)
         else:
             self._no_file_error('Raw',keyword=keyword)
-        return raw
+        return self._exclude_unpicked_types(raw)
 
 
     def _save_raw(self,raw,keyword=None):
@@ -402,8 +402,7 @@ class MEEGbuddy:
                              verbose=False,preload=True)
         self._file_loaded('Epochs',event=event,keyword=keyword)
         epochs._data = epochs._data.astype('float64') # mne bug work-around
-        epochs = self._pick_types(epochs)
-        return epochs
+        return self._exclude_unpicked_types(epochs)
 
 
     def _save_epochs(self,epochs,event,keyword=None):
@@ -908,6 +907,7 @@ class MEEGbuddy:
             self._exclude_ICA_components(ica,ecg,indices,scores)
             return all_scores
 
+
     def _exclude_ICA_components(self,ica,ch,indices,scores):
         for ind in indices:
             if ind not in ica.exclude:
@@ -917,6 +917,7 @@ class MEEGbuddy:
         fig = ica.plot_scores(scores, exclude=indices, show=False)
         fig.savefig(self._fname('plots','source_scores','jpg',ch))
         plt.close(fig)
+
 
     def plotICA(self,event=None,keyword_in=None,keyword_out=None,
                 eogs=None,ecgs=None,tmin=None,tmax=None,
@@ -1630,8 +1631,8 @@ class MEEGbuddy:
             dim2 = int(np.ceil(float(len(ch_dict))/dim1))
             fig, ax_arr = plt.subplots(dim1,dim2,sharex=True,sharey=True)
             fig.set_tight_layout(False)
-            fig.subplots_adjust(left=0.1,right=0.9,top=0.9,bottom=0.1,
-                                wspace=0.05,hspace=0.05)
+            fig.subplots_adjust(left=0.05,right=0.9,top=0.9,bottom=0.1,
+                                wspace=0.01,hspace=0.2)
             ax_arr = ax_arr.flatten()
             for i,ax in enumerate(ax_arr):
                 ax.set_facecolor('white')
@@ -1757,11 +1758,11 @@ class MEEGbuddy:
 
     def _exclude_unpicked_types(self,inst):
         return inst.pick_types(meg=self.meg,eeg=self.eeg,eog=True,
-                                   ecg=True,emg=True,stim=True,ref_meg=True,
-                                   misc=True,resp=True,chpi=True,
-                                   exci=True,ias=True,system=True,seeg=True,
-                                   dipole=True,gof=True,bio=True,ecog=True,
-                                   fnirs=True,exclude=[])
+                               ecg=True,emg=True,stim=True,ref_meg=True,
+                               misc=True,resp=True,chpi=True,
+                               exci=True,ias=True,syst=True,seeg=self.seeg,
+                               dipole=True,gof=True,bio=True,ecog=self.ecog,
+                               fnirs=True,exclude=[])
 
 
     def _pick_types(self,inst,dt):
@@ -1873,7 +1874,7 @@ class MEEGbuddy:
                 ax = axs
             else:
                 ax = axs[i]
-                ax.set_title(ch_dict[ch],fontsize=12)
+                ax.set_title(ch_dict[ch],fontsize=6,pad=0)
             ax.axvline(0,color='k')
             ax.set_ylim(vmin,vmax)
             v = epochs_mean[ch]-epochs_mean[ch].mean()
@@ -1914,21 +1915,23 @@ class MEEGbuddy:
                 ax = axs
             else:
                 ax = axs[i]
-                ax.set_title(ch_dict[ch],fontsize=12)
+                ax.set_title(ch_dict[ch],fontsize=6,pad=0)
             ax.invert_yaxis()
             if clusters is None:
-                current_data = cmap(norm(epochs_mean[ch]))
-                im = ax.imshow(current_data,aspect=aspect,extent=extent,
+                current_data = cmap(norm(epochs_mean[ch].T))
+                im = ax.imshow(current_data[::-1],aspect=aspect,extent=extent,
                                cmap=cmap,norm=norm)
             else:
                 image = np.ones((current_data.shape[0],
                                  current_data.shape[1],3))*vmax
-                image[:,:,0] = current_data[:,:,i]
+                image[:,:,0] = current_data[:,:,i].T
                 image[:,:,1:2] = 0
-                ax.imshow(image,aspect=aspect,norm=norm,extent=extent)
-            ax.set_xticks(np.round(np.linspace(tmin,tmax,5),2))
+                ax.imshow(image[::-1],aspect=aspect,norm=norm,extent=extent)
+            xbuffer = (tmax-tmin)/5
+            ax.set_xticks(np.round(np.linspace(tmin+xbuffer,tmax-xbuffer,2),2))
             frequency_labels = np.round(frequencies[::10],2)
-            ax.set_yticks(np.round(np.linspace(fmin,fmax,5),2))
+            ybuffer = (fmax-fmin)/5
+            ax.set_yticks(np.round(np.linspace(fmin+ybuffer,fmax-ybuffer,3),0))
         cbar_ax = fig.add_axes([0.92, 0.1, 0.05, 0.8])
         fig.colorbar(im, cax=cbar_ax)
 
@@ -1940,7 +1943,7 @@ class MEEGbuddy:
                 ax = axs
             else:
                 ax = axs[i]
-                ax.set_title(ch_dict[ch],fontsize=12)
+                ax.set_title(ch_dict[ch],fontsize=6,pad=0)
             lines = ax.plot(times,epochs_mean[ch])
             if not butterfly:
                 ax.fill_between(times,epochs_mean[ch]-epochs_std[ch],
@@ -2912,7 +2915,7 @@ class MEEGbuddy:
 
     def sourceBootstrap(self,event,keyword_in=None,keyword_out=None,
                         snr=1.0,method='dSPM',pick_ori='normal',tfr=True,
-                        itc=True,fmin=7,fmax=35,nmin=3,nmax=10,steps=7,
+                        itc=True,fmin=4,fmax=150,nmin=2,nmax=75,steps=32,
                         bands={'theta':(4,8),'alpha':(8,15),
                                'beta':(15,30),'low-gamma':(30,80),
                                'high-gamma':(80,150)},
@@ -3493,26 +3496,20 @@ class MEEGbuddy:
                             tmin=None,tmax=None,fmin=4,fmax=150,
                             nmin=2,nmax=75,steps=32,gif_combine=True,
                             method='pli',tube_radius=0.001,time_dilation=10,
-                            n_jobs=5,stc=True,fps=20,resample_freq=100,
+                            n_jobs=5,stc=True,fps=20,
                             bands={'theta':(4,8),'alpha':(8,15),
                                    'beta':(15,30),'low-gamma':(30,80),
                                    'high-gamma':(80,150)},
-                            views=['lat','cau','dor','ven','fro','par'],
+                            views=['llat','cau','dor','ven','fro','lfpar',
+                                   'rlat','rcpar'],
                             cmap='YlOrRd',overwrite=False):
         if downsample:
             np.random.seed(seed)
         keyword_out = keyword_in if keyword_out is None else keyword_out
         frequencies = np.logspace(np.log10(fmin),np.log10(fmax),steps)
         n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
-        if bands == None:
-            bands = {'%.1f' %(f):(f,f) for f in frequencies}
         tmin,tmax = self._default_t(event,tmin,tmax)
         epochs = self._load_epochs(event,keyword=keyword_in)
-        '''if resample_freq < epochs.info['sfreq']:
-            epochs = epochs.resample(resample_freq,npad='auto')
-        elif resample_freq > epochs.info['sfreq']:
-            raise ValueError('Resample frequency %.1f >' %(resample_freq) +
-                             ' original %.1f' %(epochs.info['sfreq']))'''
         epochs = epochs.crop(tmin=tmin,tmax=tmax)
         values = self._default_values(condition,values=values)
         value_indices = self._get_indices(epochs,condition,values)
@@ -3521,11 +3518,8 @@ class MEEGbuddy:
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=True,verbose=False)
-        if fmin and fmax:
-            if bands:
-                print('Ignoring fmin and fmax because bands are defined')
-            else:
-                bands = {i:(i,i) for i in range(fmin,fmax+1,bandwidth)}
+        if bands == None:
+            bands = {'%.1f' %(f):(f,f) for f in frequencies}
         for dt in self._get_data_types():
             epo = self._pick_types(epochs,dt)
             sens_loc = np.array([ch['loc'][:3] for ch in epo.info['chs']])
@@ -3539,6 +3533,7 @@ class MEEGbuddy:
                 n_cs = np.array([n for f,n in zip(frequencies,n_cycles) if
                                  f >= fmin and f <= fmax])
                 for value in values:
+                    print(value)
                     indices = value_indices[value]
                     if downsample:
                         print('Subsampling %i/%i %s %s.' %(nTR,len(indices),
@@ -3569,10 +3564,11 @@ class MEEGbuddy:
                         if linalg.norm(sens_loc[i]-sens_loc[j]) > min_dist:
                             nodes[t][(i,j)] = con[i,j,t]
                     gif_names = []
-                    for view in views:
+                    for view in views + ['cbar']:
+                        print(view)
                         fig = mlab.figure(size=(600,600),bgcolor=(0.5, 0.5, 0.5))
                         fig.scene._lift() #weird bug https://github.com/enthought/mayavi/issues/702
-                        mlab.view(*view_to_mlab(view))
+                        mlab_view = view_to_mlab(view)
                         scale_points = mlab.plot3d([0,1],[0,1],[0,1],[vmin,vmin],
                                                vmin=vmin, vmax=vmax,
                                                tube_radius=tube_radius,
@@ -3580,24 +3576,28 @@ class MEEGbuddy:
                         def make_frame(t):
                             mlab.clf()
                             t_ind = int(t*fps*time_factor)
-                            pts = mlab.points3d(sens_loc[:, 0],
-                                                sens_loc[:, 1], 
-                                                sens_loc[:, 2],
-                                                color=(1, 1, 1),
-                                                opacity=1,
-                                                scale_factor=0.005)
-                            for node,val in tqdm(nodes[t_ind].items()):
-                                x1, y1, z1 = sens_loc[node[0]]
-                                x2, y2, z2 = sens_loc[node[1]]
-                                points = mlab.plot3d([x1, x2], [y1, y2],
-                                                     [z1, z2], [val, val],
-                                                     vmin=vmin, vmax=vmax,
-                                                     tube_radius=tube_radius,
-                                                     colormap=cmap)
-                                points.module_manager.scalar_lut_manager.reverse_lut = True
-                            mlab.scalarbar(scale_points,title=('Phase Lag Index (PLI), ' +
-                                           'time=%.2f' %(epo.times[t_ind])),
-                                           nb_labels=4)
+                            if view == 'cbar' or not gif_combine:
+                                mlab.scalarbar(scale_points,title=('Phase Lag Index (PLI), ' +
+                                               'time=%.2f' %(epo.times[t_ind])),
+                                               nb_labels=4)
+                            if view != 'cbar':
+                                pts = mlab.points3d(sens_loc[:, 0],
+                                                    sens_loc[:, 1], 
+                                                    sens_loc[:, 2],
+                                                    color=(1, 1, 1),
+                                                    opacity=1,
+                                                    scale_factor=0.005)
+                                for node,val in tqdm(nodes[t_ind].items()):
+                                    x1, y1, z1 = sens_loc[node[0]]
+                                    x2, y2, z2 = sens_loc[node[1]]
+                                    points = mlab.plot3d([x1, x2], [y1, y2],
+                                                         [z1, z2], [val, val],
+                                                         vmin=vmin, vmax=vmax,
+                                                         tube_radius=tube_radius,
+                                                         colormap=cmap)
+                                #points.module_manager.scalar_lut_manager.reverse_lut = True
+                                mlab.view(*mlab_view)
+                                mlab.move(up=-0.03)
                             return mlab.screenshot(antialiased=True)
 
                         anim = mpy.VideoClip(make_frame,duration=time_dilation*(tmax-tmin))
@@ -3617,11 +3617,14 @@ class MEEGbuddy:
 
 def view_to_mlab(view):
     view_dict = {'dor':(-90,50,0.75,np.zeros((3,))),
-                 'lat':(5.6,85,0.75,np.zeros((3,))),
+                 'llat':(5.6,85,0.75,np.zeros((3,))),
+                 'rlat':(5.6,-85,0.75,np.zeros((3,))),
                  'cau':(-85,90,0.75,np.zeros((3,))),
                  'ven':(-138,177,0.75,np.zeros((3,))),
                  'fro':(92,71,0.75,np.zeros((3,))),
-                 'par':(45,50,0.75,np.zeros((3,)))}
+                 'lfpar':(-45,-57,0.75,np.zeros((3,))),
+                 'rcpar':(-45,57,0.75,np.zeros((3,))),
+                 'cbar':(92,71,0.75,np.zeros((3,)))}
     return view_dict[view]
 
 
