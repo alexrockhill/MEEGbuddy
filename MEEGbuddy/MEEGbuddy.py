@@ -1932,7 +1932,7 @@ class MEEGbuddy:
             frequency_labels = np.round(frequencies[::10],2)
             ybuffer = (fmax-fmin)/5
             ax.set_yticks(np.round(np.linspace(fmin+ybuffer,fmax-ybuffer,3),0))
-        cbar_ax = fig.add_axes([0.92, 0.1, 0.05, 0.8])
+        cbar_ax = fig.add_axes([0.92, 0.1, 0.03, 0.8])
         fig.colorbar(im, cax=cbar_ax)
 
 
@@ -2913,7 +2913,8 @@ class MEEGbuddy:
         self._save_raw(raw,keyword=keyword_out)
 
 
-    def sourceBootstrap(self,event,keyword_in=None,keyword_out=None,
+    def sourceBootstrap(self,event,condition=None,values=None,
+                        keyword_in=None,keyword_out=None,
                         snr=1.0,method='dSPM',pick_ori='normal',tfr=True,
                         itc=True,fmin=4,fmax=150,nmin=2,nmax=75,steps=32,
                         bands={'theta':(4,8),'alpha':(8,15),
@@ -2926,26 +2927,43 @@ class MEEGbuddy:
             a tradeoff between more extreme values and lower snr of source
             estimates. Nboot is better the greater the number but 100 is
             approximately 40 GB with tfr'''
+        epochs = self._load_epochs(event,keyword=keyword_in)
+        bl_epochs = self._load_epochs('Baseline',keyword=keyword_in)
+        keyword_out = keyword_in if keyword_out is None else keyword_out
+        fname = self._fname('analyses','bootstrap','npz',event,keyword_out)
+        if os.path.isfile(fname) and not overwrite:
+            self._overwrite_error('Bootstraps',keyword_out)
+        if condition is None:
+            print('Making bootstrapped source estimates using evokeds ' +
+                  'of size %i to prepare to correlate the average ' %(Nave) +
+                  'value of each bootstrap for a given condition with ' +
+                  'the source estimate...')
+        else:
+            values = self._default_values(condition,values=values)
+            value_indices = self._get_indices(epochs,condition,values)
+            Nave = min([len(value_indices[value]) for value in value_indices])
+            epochs = epochs.drop([i for i in range(len(epochs)) if not 
+                                  any([i in value_indices[value] 
+                                       for value in values])])
+            print('Making bootstrapped source estimates using evokeds ' +
+                  'of size %s, the downsampled number of trials for ' %(Nave) +
+                  '%s with values %s ' %(condition,', '.join(values)) +
+                  'to prepare to compare the observed source estimate ' + 
+                  'for each value to the bootstrap distribution...')
         freqs = np.logspace(np.log10(fmin),np.log10(fmax),steps)
+        n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
         band_inds = {band:[i for i,f in enumerate(freqs) if
                      f >= bands[band][0] and f <= bands[band][1]]
                      for band in bands if [i for i,f in enumerate(freqs) if
                      f >= bands[band][0] and f <= bands[band][1]]}
-        n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
-        keyword_out = keyword_in if keyword_out is None else keyword_out
-        fname = self._fname('analyses','bootstrap','npz',event,keyword_out)
-        if os.path.isfile(fname) and not overwrite:
-            raise ValueError('Bootstraps already exist, use overwrite=True')
         np.random.seed(seed)
-        epochs = self._load_epochs(event,keyword=keyword_in)
-        bl_epochs = self._load_epochs('Baseline',keyword=keyword_in)
         removal_indices = []
         for j,i in enumerate(epochs.events[:,2]):
             if not i in bl_epochs.events[:,2]:
                 removal_indices.append(j)
         epochs = epochs.drop(removal_indices)
+        value_indices = self._get_indices(epochs,condition,values) # Need to recompute
         bootstrap_indices = np.random.randint(0,len(epochs),(Nboot,Nave))
-
         bem,source,coord_trans,lambda2,epochs,bl_epochs,fwd = \
             self._source_setup(event,snr,epochs,bl_epochs)
         events = epochs.events[:,2]
@@ -3502,7 +3520,7 @@ class MEEGbuddy:
                                    'high-gamma':(80,150)},
                             views=['llat','cau','dor','ven','fro','lfpar',
                                    'rlat','rcpar'],
-                            cmap='YlOrRd',overwrite=False):
+                            cmap='Reds',overwrite=False):
         if downsample:
             np.random.seed(seed)
         keyword_out = keyword_in if keyword_out is None else keyword_out
@@ -3566,7 +3584,7 @@ class MEEGbuddy:
                     gif_names = []
                     for view in views + ['cbar']:
                         print(view)
-                        fig = mlab.figure(size=(600,600),bgcolor=(0.5, 0.5, 0.5))
+                        fig = mlab.figure(size=(600,600),bgcolor=(0,0,0))
                         fig.scene._lift() #weird bug https://github.com/enthought/mayavi/issues/702
                         mlab_view = view_to_mlab(view)
                         scale_points = mlab.plot3d([0,1],[0,1],[0,1],[vmin,vmin],
@@ -3597,7 +3615,7 @@ class MEEGbuddy:
                                                          colormap=cmap)
                                 #points.module_manager.scalar_lut_manager.reverse_lut = True
                                 mlab.view(*mlab_view)
-                                mlab.move(up=-0.03)
+                                mlab.move(up=-0.025)
                             return mlab.screenshot(antialiased=True)
 
                         anim = mpy.VideoClip(make_frame,duration=time_dilation*(tmax-tmin))
