@@ -1,1 +1,0 @@
-/Users/alexrockhill/software/anaconda3/lib/python3.6/encodings/latin_1.py
