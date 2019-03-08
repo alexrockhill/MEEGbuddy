@@ -17,7 +17,7 @@ First install anaconda (recommended) (https://www.anaconda.com/distribution/#dow
 0a. run "pip install virtualenv --user"
 0b. run "virtualenv /Path/to/where/you/want/to/store/your/venv"
 0c. run "source /Path/to/where/you/want/to/store/your/venv/bin/activate"
-1. run "pip install MEEGbuddy"
+1. run "pip install MEEGbuddy,numpy"
 2. run "pip install -r requirements.txt"
 3. (Optional) Install freesurfer (https://surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall) 
 4. (Optional) Add "alias mb 'cd /Path/to/MEEGbuddyDemo/or/your/project; source /Path/to/where/you/want/to/store/your/venv/bin/activate; export FREESURFER_HOME=/Path/to/freesurfer; source $FREESURFER_HOME/SetUpFreeSurfer.sh' " so that you can type "mb" into a terminal to activate your project. Note you need to have installed freesurfer for the last two commands in the alias (export ... and source $FREESURFER...)
