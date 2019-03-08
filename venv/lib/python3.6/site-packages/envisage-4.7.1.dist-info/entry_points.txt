@@ -1,0 +1,4 @@
+
+            [envisage.plugins]
+            envisage.core = envisage.core_plugin:CorePlugin
+            
