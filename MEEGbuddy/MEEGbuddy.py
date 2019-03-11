@@ -14,8 +14,9 @@ try:
                      BaseEpochs, read_evokeds, EvokedArray, read_labels_from_annot,
                      Label,events_from_annotations)
     from mne.utils import set_config
-    from mne.time_frequency import (tfr_morlet,tfr_array_morlet,
+    from mne.time_frequency import (morlet,tfr_morlet,tfr_array_morlet,
                                     tfr_array_multitaper,AverageTFR,morlet)
+    from mne.time_frequency.tfr import cwt
     from mne.minimum_norm import (make_inverse_operator,apply_inverse_epochs,
                                   apply_inverse,read_inverse_operator,
                                   write_inverse_operator,source_induced_power,
@@ -2962,7 +2963,6 @@ class MEEGbuddy:
             if not i in bl_epochs.events[:,2]:
                 removal_indices.append(j)
         epochs = epochs.drop(removal_indices)
-        value_indices = self._get_indices(epochs,condition,values) # Need to recompute
         bootstrap_indices = np.random.randint(0,len(epochs),(Nboot,Nave))
         bem,source,coord_trans,lambda2,epochs,bl_epochs,fwd = \
             self._source_setup(event,snr,epochs,bl_epochs)
@@ -2973,9 +2973,8 @@ class MEEGbuddy:
                  dtype='float64', mode='w+',
                  shape=(batch,fwd['nsource'],len(epochs.times)))
         if tfr:
-            Ws = mne.time_frequency.morlet(epochs.info['sfreq'],
-                                               freqs,n_cycles=n_cycles,
-                                               zero_mean=False)
+            Ws = morlet(epochs.info['sfreq'],freqs,n_cycles=n_cycles,
+                        zero_mean=False)
             powers = {band:np.memmap('sb_tfr_%s_%s_workfile' %(event,keyword_out),
                                      dtype='float64', mode='w+',
                                      shape=(batch,fwd['nsource'],len(epochs.times)))
@@ -3008,9 +3007,8 @@ class MEEGbuddy:
                                     pick_ori=pick_ori)
                 stcs[i] = stc.data[:]
                 if tfr:
-                    this_tfr = mne.time_frequency.tfr.cwt(stc.data.copy(),Ws,
-                                                          use_fft=use_fft,
-                                                          mode=mode)
+                    this_tfr = cwt(stc.data.copy(),Ws,use_fft=use_fft,
+                                   mode=mode)
                     power = (this_tfr * this_tfr.conj()).real
                     if itc:
                         this_itc = np.angle(this_tfr)
@@ -3043,9 +3041,10 @@ class MEEGbuddy:
         self._save_source(stc,event,'Bootstrap','base',keyword=keyword_out)
 
 
-    def sourceCorrelation(self,event,condition,keyword_in=None,
+    def sourcePermutation(self,event,condition,keyword_in=None,
                           keyword_out=None,baseline=(-0.5,-0.1),
-                          n_permutations=1000,overwrite=False):
+                          n_permutations=1000,correlation=False,
+                          overwrite=False):
         ''' baseline only supported in source window (this also means
             locked to the same event as the source estimate) due to
             normalization issues.
@@ -3139,29 +3138,30 @@ class MEEGbuddy:
                     if itc:
                         del itcs2
             print(' Done.')
-        # Get baseline distribution
-        for s_ind in tqdm(range(nSRC)):
-            s_data = np.array(stcs[:,s_ind])
-            if tfr:
-                power_s_data = {band:powers[band][:,s_ind] for band in bands}
-                if itc:
-                    itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
-            for p_ind in range(n_permutations):
-                dist = s_data[:,bl_indices].mean(axis=1)
-                _,_,r,_,_ = linregress(dist[permutation_indices[p_ind]],
-                                       bootstrap_conditions)
-                bl_dist[s_ind,p_ind] = r
+        if correlation:
+            # Get baseline distribution
+            for s_ind in tqdm(range(nSRC)):
+                s_data = np.array(stcs[:,s_ind])
                 if tfr:
-                    for band in bands:
-                        power_dist = power_s_data[band][:,bl_indices].mean(axis=1)
-                        _,_,r,_,_ = linregress(power_dist[permutation_indices[p_ind]],
-                                               bootstrap_conditions)
-                        power_bl_dist[band][s_ind,p_ind] = r
-                        if itc:
-                            itc_dist = itc_s_data[band][:,bl_indices].mean(axis=1)
-                            _,_,r,_,_ = linregress(itc_dist[permutation_indices[p_ind]],
+                    power_s_data = {band:powers[band][:,s_ind] for band in bands}
+                    if itc:
+                        itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
+                for p_ind in range(n_permutations):
+                    dist = s_data[:,bl_indices].mean(axis=1)
+                    _,_,r,_,_ = linregress(dist[permutation_indices[p_ind]],
+                                           bootstrap_conditions)
+                    bl_dist[s_ind,p_ind] = r
+                    if tfr:
+                        for band in bands:
+                            power_dist = power_s_data[band][:,bl_indices].mean(axis=1)
+                            _,_,r,_,_ = linregress(power_dist[permutation_indices[p_ind]],
                                                    bootstrap_conditions)
-                            itc_bl_dist[band][s_ind,p_ind] = r
+                            power_bl_dist[band][s_ind,p_ind] = r
+                            if itc:
+                                itc_dist = itc_s_data[band][:,bl_indices].mean(axis=1)
+                                _,_,r,_,_ = linregress(itc_dist[permutation_indices[p_ind]],
+                                                       bootstrap_conditions)
+                                itc_bl_dist[band][s_ind,p_ind] = r
         # Get p-values from permutation distribution
         for s_ind in tqdm(range(nSRC)):
             s_data = np.array(stcs[:,s_ind])
@@ -3480,31 +3480,40 @@ class MEEGbuddy:
                 data_dict)
 
 
-    def _has_wc(self,event,condition,value,keyword=None):
+    def _has_wc(self,event,condition,value,band,
+                data_type=None,keyword=None):
         fname = self._fname('analyses','WaveletConnectivity',
-                            'npz',keyword,event,condition,value)
+                            'npz',keyword,event,condition,
+                            value,band,data_type)
         return op.isfile(fname)
 
 
-    def _load_wc(self,event,condition,value,keyword=None):
+    def _load_wc(self,event,condition,value,band,
+                 data_type=None,keyword=None):
         fname = self._fname('analyses','WaveletConnectivity',
-                            'npz',keyword,event,condition,value)
+                            'npz',keyword,event,condition,value,
+                            band,data_type)
         if os.path.isfile(fname):
-            self._file_loaded('Wavelet Connectivity',event=event,
-                              condition=condition,
-                              value=value,keyword=keyword)
+            self._file_loaded('Wavelet Connectivity',band,
+                              event=event,condition=condition,
+                              value=value,data_type=data_type,
+                              keyword=keyword)
             f = np.load(fname)
         else:
-            self._no_file_error('PCI',event=event,condition=condition,
-                                value=value,keyword=keyword)
+            self._no_file_error('Wavelet Connectivity',band,
+                                event=event,condition=condition,
+                                value=value,data_type=data_type,
+                                keyword=keyword)
         return f['con']
 
 
-    def _save_wc(self,con,event,condition,value,keyword=None):
-        self._file_saved('Wavelet Connectivity',event=event,
-                         condition=condition,value=value,keyword=keyword)
+    def _save_wc(self,con,event,condition,value,band,
+                 data_type=None,keyword=None):
+        self._file_saved('Wavelet Connectivity',band,event=event,
+                         condition=condition,value=value,
+                         data_type=data_type,keyword=keyword)
         fname = self._fname('analyses','WaveletConnectivity','npz',
-                            keyword,event,condition,value)
+                            keyword,event,condition,value,band,data_type)
         np.savez_compressed(fname,con=con)
 
 
@@ -3539,6 +3548,7 @@ class MEEGbuddy:
         if bands == None:
             bands = {'%.1f' %(f):(f,f) for f in frequencies}
         for dt in self._get_data_types():
+            print(dt)
             epo = self._pick_types(epochs,dt)
             sens_loc = np.array([ch['loc'][:3] for ch in epo.info['chs']])
             time_factor = int(len(epo.times)/(time_dilation*(tmax-tmin)*fps))
@@ -3546,6 +3556,10 @@ class MEEGbuddy:
                 raise ValueError('Too many frames per second and/or time dilation, ' + 
                                  'not enough connectivity time points')
             for band_name,(fmin,fmax) in bands.items():
+                print(band_name)
+                if not any([f for f in frequencies if f >= fmin and f <= fmax]):
+                    print('No frequencies for this band')
+                    continue
                 freqs = np.array([f for f in frequencies 
                                   if f >= fmin and f <= fmax])
                 n_cs = np.array([n for f,n in zip(frequencies,n_cycles) if
@@ -3553,15 +3567,19 @@ class MEEGbuddy:
                 for value in values:
                     print(value)
                     indices = value_indices[value]
+                    if not indices:
+                        print('No epochs for this value')
+                        continue
                     if downsample:
                         print('Subsampling %i/%i %s %s.' %(nTR,len(indices),
                                                            condition,value))
                         np.random.shuffle(indices)
                         indices = indices[:nTR]
-                    if (self._has_wc(event,condition,value,keyword_out) and 
+                    if (self._has_wc(event,condition,value,band_name,
+                                     dt,keyword_out) and 
                         not overwrite):
-                        con = self._load_wc(event,condition,value,
-                                            keyword=keyword_out)
+                        con = self._load_wc(event,condition,value,band_name,
+                                            data_type=dt,keyword=keyword_out)
                     else:
                         con,av_freqs,times,n_epochs,n_tapers = \
                             spectral_connectivity(epo[indices],method=method,
@@ -3571,8 +3589,8 @@ class MEEGbuddy:
                                                   cwt_n_cycles=n_cs,
                                                   n_jobs=n_jobs)
                         con = con.squeeze()
-                        self._save_wc(con,event,condition,value,
-                                            keyword=keyword_out)
+                        self._save_wc(con,event,condition,value,band_name,
+                                      data_type=dt,keyword=keyword_out)
                     con_sorted = np.sort(con, axis=None)
                     vmin = con_sorted[-int(threshold/len(epo.times)*con.size)]
                     vmax = con_sorted[-1]
