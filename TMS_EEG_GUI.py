@@ -1,14 +1,14 @@
 import subprocess
-import os
-import sys
+import op as op
+import os,sys,mne
 from tkinter import messagebox
 from tkinter import simpledialog
-from tkinter.filedialog import askopenfilename
+from tkinter.filedialog import askopenfilename,askdirectory
 from pathlib import Path
 import time
 import numpy as np
 from tkinter import (Tk, Canvas, Frame, Label, Button, Entry, Listbox, Scrollbar,
-                     OptionMenu, StringVar, IntVar, Checkbutton)
+                     OptionMenu, StringVar, IntVar, Checkbutton, Text)
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import json
 from MEEGbuddy import MEEGbuddy
@@ -27,7 +27,7 @@ class TMS_EEG_GUI(Frame):
         self.init_data_dir()
         width = self.root.winfo_screenwidth()
         height = self.root.winfo_screenheight()
-        self.size = min([height,width])
+        self.size = min([height,width])*0.9
         self.large_font = ('Helvetica',int(self.size*24/1080))
         self.medium_font = ('Helvetica',int(self.size*14/1080))
         self.small_font = ('Helvetica',int(self.size*10/1080))
@@ -44,18 +44,21 @@ class TMS_EEG_GUI(Frame):
 
     def init_data_dir(self):
         self.data_dir = './TMS_EEG_GUI_data'
-        if not os.path.isdir(self.data_dir):
+        if not op.isdir(self.data_dir):
             os.makedirs(self.data_dir)
         sub_dirs_names = ['saved_exp','data','tmp']
         self.sub_dirs = {}
         for sub_dir_name in sub_dirs_names:
-            sub_dir_full_path = os.path.join(self.data_dir,sub_dir_name)
-            if not os.path.isdir(sub_dir_full_path):
+            sub_dir_full_path = op.join(self.data_dir,sub_dir_name)
+            if not op.isdir(sub_dir_full_path):
                 os.makedirs(sub_dir_full_path)
             self.sub_dirs[sub_dir_name] = sub_dir_full_path
 
     def show_file_browser(self,entry,ftypes):
-        fname = askopenfilename(title='Select file',filetypes=ftypes)
+        if ftypes == 'dir':
+            fname = askdirectory(title='Select directory')
+        else:
+            fname = askopenfilename(title='Select file',filetypes=ftypes)
         entry.delete(0,'end')
         entry.insert(0,fname)
 
@@ -78,7 +81,7 @@ class TMS_EEG_GUI(Frame):
                messagebox.showerror('Error','Location file not specified')
             try:
                 raw = read_raw_brainvision(raw_fname,
-                    preload=os.path.join(self.sub_dirs['tmp'],'raw_tmp'))
+                    preload=op.join(self.sub_dirs['tmp'],'raw_tmp'))
             except Exception as e:
                 print(e)
                 messagebox.showerror('Error','Failed to read BrainVision raw file')
@@ -120,10 +123,10 @@ class TMS_EEG_GUI(Frame):
         name_items = ['Name','Condition (e.g. Awake)','Date','Time','Target','Hemisphere']
         fname = '_'.join([str(self.data_entries[i].get()).replace('.','_').replace('/','_')
                              for i in name_items])
-        if not os.path.isdir(os.path.join(self.sub_dirs['data'],'raw')):
-            os.makedirs(os.path.join(self.sub_dirs['data'],'raw'))
-        exp_fname = os.path.join(self.sub_dirs['saved_exp'],fname+'.json')
-        if os.path.isfile(exp_fname):
+        if not op.isdir(op.join(self.sub_dirs['data'],'raw')):
+            os.makedirs(op.join(self.sub_dirs['data'],'raw'))
+        exp_fname = op.join(self.sub_dirs['saved_exp'],fname+'.json')
+        if op.isfile(exp_fname):
             ok = messagebox.askokcancel('TMS-EEG GUI','Overwrite previous data?')
             if not ok:
                 return
@@ -152,7 +155,7 @@ class TMS_EEG_GUI(Frame):
             chs.info['lowpass'] = raw.info['lowpass']
             raw.add_channels([chs])
         raw.drop_channels(stim_chs)
-        raw_fname = os.path.join(self.sub_dirs['data'],'raw',fname + '-raw.fif')
+        raw_fname = op.join(self.sub_dirs['data'],'raw',fname + '-raw.fif')
         raw.save(raw_fname, overwrite=True)
         self.data['fdata'] = raw_fname
         if len(triggers) == 0:
@@ -168,7 +171,7 @@ class TMS_EEG_GUI(Frame):
             json.dump(self.data,f)
 
     def load_exp(self,fname):
-        with open(os.path.join(self.sub_dirs['saved_exp'],fname),'r') as f:
+        with open(op.join(self.sub_dirs['saved_exp'],fname),'r') as f:
             self.data = json.load(f)
             for key in self.data:
                 if key in self.data_entries:
@@ -186,16 +189,16 @@ class TMS_EEG_GUI(Frame):
     def recon_screen(self):
         self.data_entries = {}
         # Headers
-        Label(self.getFrame(0,0.25,0,1),text='Freesurfer Reconstruction',
+        Label(self.getFrame(0,0.15,0,1),text='Freesurfer Reconstruction',
               font=self.large_font).pack(fill='both',expand=1)
         # File loaders
-        Label(self.getFrame(0.35,0.45,0,0.25),text='T1 image Location',
+        Label(self.getFrame(0.15,0.25,0,0.25),text='T1 image Location',
               wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        t1 = Entry(self.getFrame(0.35,0.45,0.25,0.75),font=self.medium_font)
+        t1 = Entry(self.getFrame(0.15,0.25,0.25,0.75),font=self.medium_font)
         t1.pack(fill='both',expand=1)
         t1.focus_set()
-        t1_file_button = Button(self.getFrame(0.35,0.45,0.75,1),text='Browse',
+        t1_file_button = Button(self.getFrame(0.15,0.25,0.75,1),text='Browse',
                                 font=self.medium_font)
         t1_file_button.pack(fill='both',expand=1)
         t1_file_button.configure(command =
@@ -212,73 +215,77 @@ class TMS_EEG_GUI(Frame):
         sub.focus_set()
         self.data_entries['Subject'] = sub
 
-        Label(self.getFrame(0.45,0.55,0,0.25),text='Subjects Directory',
+        Label(self.getFrame(0.35,0.45,0,0.25),text='Subjects Directory',
               wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        subs_dir = Entry(self.getFrame(0.45,0.55,0.25,1),font=self.medium_font)
+        subs_dir = Entry(self.getFrame(0.35,0.45,0.25,1),font=self.medium_font)
         subs_dir.pack(fill='both',expand=1)
         subs_dir.focus_set()
         self.data_entries['FS Dir'] = subs_dir
 
-        Label(self.getFrame(0.55,0.65,0,0.25),text='Boundary Element Model',
+        Label(self.getFrame(0.45,0.55,0,0.25),text='Boundary Element Model',
               wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        Label(self.getFrame(0.55,0.60,0.25,0.35),text='ico',
-              wraplength=0.1*self.size,font=self.small_font
+        Label(self.getFrame(0.45,0.50,0.25,0.45),text='ico',
+              wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        ico = Entry(self.getFrame(0.60,0.65,0.25,0.35),font=self.small_font)
+        ico = Entry(self.getFrame(0.50,0.55,0.25,0.45),font=self.medium_font)
         ico.pack(fill='both',expand=1)
         ico.focus_set()
-        ico.intert(0,'4')
+        ico.insert(0,'4')
         self.data_entries['Ico'] = ico
 
-        Label(self.getFrame(0.55,0.60,0.35,0.45),text='conductivity',
-              wraplength=0.1*self.size,font=self.small_font
+        Label(self.getFrame(0.45,0.50,0.45,0.65),text='conductivity',
+              wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        cond = Entry(self.getFrame(0.60,0.65,0.25,0.35),font=self.small_font)
+        cond = Entry(self.getFrame(0.50,0.55,0.45,0.65),font=self.medium_font)
         cond.pack(fill='both',expand=1)
         cond.focus_set()
         cond.insert(0,'(0.3, 0.006, 0.3)')
         self.data_entries['Conductivity'] = cond
 
-        Label(self.getFrame(0.55,0.60,0.35,0.45),text='name',
-              wraplength=0.1*self.size,font=self.small_font
+        Label(self.getFrame(0.45,0.50,0.65,1),text='name',
+              wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        bemf = Entry(self.getFrame(0.60,0.65,0.25,0.35),font=self.small_font)
+        bemf = Entry(self.getFrame(0.50,0.55,0.65,1),font=self.medium_font)
         bemf.pack(fill='both',expand=1)
         bemf.focus_set()
         bemf.insert(0,'-bem-sol.fif')
         self.data_entries['BEM File'] = bemf
 
-        Label(self.getFrame(0.65,0.75,0,0.25),text='Source Space',
+        Label(self.getFrame(0.55,0.65,0,0.25),text='Source Space',
               wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        Label(self.getFrame(0.55,0.60,0.25,0.35),text='spacing',
-              wraplength=0.1*self.size,font=self.small_font
+        Label(self.getFrame(0.55,0.60,0.25,0.45),text='spacing',
+              wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        spacing = Entry(self.getFrame(0.60,0.65,0.25,0.35),font=self.small_font)
+        spacing = Entry(self.getFrame(0.60,0.65,0.25,0.45),font=self.medium_font)
         spacing.pack(fill='both',expand=1)
         spacing.focus_set()
-        spacing.intert(0,'oct6')
+        spacing.insert(0,'oct6')
         self.data_entries['Spacing'] = spacing
 
-        Label(self.getFrame(0.55,0.60,0.35,0.45),text='surface',
-              wraplength=0.1*self.size,font=self.small_font
+        Label(self.getFrame(0.55,0.60,0.45,0.65),text='surface',
+              wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        surface = Entry(self.getFrame(0.60,0.65,0.25,0.35),font=self.small_font)
+        surface = Entry(self.getFrame(0.60,0.65,0.45,0.65),font=self.medium_font)
         surface.pack(fill='both',expand=1)
         surface.focus_set()
         surface.insert(0,'white')
         self.data_entries['Surface'] = surface
 
-        Label(self.getFrame(0.55,0.60,0.35,0.45),text='name',
-              wraplength=0.1*self.size,font=self.small_font
+        Label(self.getFrame(0.55,0.60,0.65,1.0),text='name',
+              wraplength=0.1*self.size,font=self.medium_font
               ).pack(fill='both',expand=1)
-        srcf = Entry(self.getFrame(0.60,0.65,0.25,0.35),font=self.small_font)
+        srcf = Entry(self.getFrame(0.60,0.65,0.65,1.0),font=self.medium_font)
         srcf.pack(fill='both',expand=1)
         srcf.focus_set()
-        src.insert(0,'-src.fif')
-        self.data_entries['SRC File'] = scrf
+        srcf.insert(0,'-src.fif')
+        self.data_entries['SRC File'] = srcf
+
+        cmd_output = Text(self.getFrame(0.65,0.85,0.1,0.9))
+        cmd_output.pack(fill='both',expand=1)
+        self.data_entries['Command Output'] = cmd_output
 
         recon_button = Button(self.getFrame(0.85,0.925,0.45,0.55),text='Recon',
                                       font=self.medium_font)
@@ -288,6 +295,76 @@ class TMS_EEG_GUI(Frame):
                                       font=self.medium_font)
         skip_button.pack(fill='both',expand=1)
         skip_button.configure(command=self.transition_load_init_screen)
+
+    def recon(self):
+        subject = self.data_entries['Subject'].get()
+        os.environ['SUBJECT'] = subject
+        subjects_dir = self.data_entries['FS Dir'].get()
+        os.environ['SUBJECTS_DIR'] = subjects_dir
+        try:
+            subprocess.call(['source $FREESURFER_HOME/SetUpFreeSurfer.sh'],
+                            env=os.environ,shell=True)
+        except:
+            raise ValueError('Freesurfer not installed or installed correctly. ' + 
+                             'Make sure $FREESURFER_HOME is defined correctly.')
+        try:
+            if os.environ['SHELL'] == '/bin/bash':
+                subprocess.call(['source $MNE_ROOT/bin/mne_setup_sh'],
+                                   env=os.environ,shell=True)
+            elif os.environ['SHELL'] == '/bin/csh':
+                subprocess.call(['source $MNE_ROOT/bin/mne_setup'],
+                                   env=os.environ,shell=True)
+            else:
+                raise ValueError('Shell not bash or csh or not understood')
+        except:
+            raise ValueError('MNE_C not installed or installed correctly. ' +
+                             'Make sure $MNE_ROOT is defined correctly.')
+
+        output = subprocess.Popen(['recon-all -subjid %s ' %(subject) + 
+                                   '-i %s --all' %(self.data_entries['T1'])],
+                                   env=os.environ,shell=True,stdout=subprocess.PIPE)
+        while True:
+            line = output.stdout.readline()
+            self.data_entries['Command Output'].insert('end',line)
+            if not line: break
+
+        bemf = op.join(subjects_dir,subject,'bem',
+                       self.data_entries['BEM File'].get())
+        if op.isfile(bemf):
+            raise ValueError('BEM file already exists, change name or delete original file')
+        model = mne.make_bem_model(subject=subject,
+                                   ico=int(self.data_entries['Ico'].get()),
+                                   conductivity=np.array(self.data_entries['Conductivity'].get()),
+                                   subjects_dir=subjects_dir)
+        bem = mne.make_bem_silution(model)
+        mne.write_bem_solution(bemf,bem)
+
+        srcf = op.join(subjects_dir,subject,'src',
+                       self.data_entries['SRC File'].get())
+        if op.isfile(srcf):
+            raise ValueError('Source file already exists, change name or delete original file')
+        src = mne.setup_source_space(subject,spacing=self.data_entries['Spacing'].get(),
+                                     surface=self.data_entries['Surface'].get(),
+                                     subjects_dir=subjects_dir,add_dist=False)
+        src.save(srcf)
+
+        messagebox.showinfo('Coregistration','In this next interactive GUI, will need to\n' +
+                            '1. Load the pial surface file -> Load Surface -> Select Pial Surface\n' +
+                            '2. Load the subject\'s digitization data: File -> Load digitizer data ->' +
+                            ' Select the raw data file for this session\n' + 
+                            '3. Open the coordinate alignment window: Adjust -> Coordinate Alignment\n' + 
+                            '4. Open the viewer window: View -> Show viewer\n' +
+                            '5. In the coordinate alignment window, click RAP, LAP and Naision, ' + 
+                            'and then after clicking each of those click on the corresponing ' +
+                            'fiducial points on the reconstructed head model\n' +
+                            '6. Click align using fiducials\n' +
+                            '7. In the View window: select Options -> Show digitizer data\n'
+                            '8. Adjust the x, y and z coordinates and rotation until ' +
+                            'the alignment is as close to the ground truth as possible\n' +
+                            'If you don\'t know these instructions, feel free to copy and paste')
+
+        subprocess.call(['mne_analyze'], env=os.environ,shell=True)
+
 
     def transition_load_init_screen(self):
         self.clear_screen()
@@ -349,21 +426,31 @@ class TMS_EEG_GUI(Frame):
         load_previous_button.configure(command =
             lambda: self.load_exp(load_file_list.get(load_file_list.curselection())))
         # experiment data
-        def make_data_label(y0,y1,text):
+        def make_data_label(y0,y1,text,browse=False):
             Label(self.getFrame(y0,y1,0,0.2),text=text,
                   font=self.medium_font).pack(fill='both',expand=1)
-            entry = Entry(self.getFrame(y0,y1,0.2,1),font=self.large_font)
+            entry = Entry(self.getFrame(y0,y1,0.2,0.9),font=self.large_font)
             entry.pack(fill='both',expand=1)
             entry.focus_set()
+            if browse is not None:
+                load_button = Button(self.getFrame(y0,y1,0.9,1.0),text='Browse',
+                                     font=self.large_font)
+                load_button.pack(fill='both',expand=1)
+                load_button.configure(command =
+                    lambda: self.show_file_browser(new_file,browse))
             self.data_entries[text] = entry
             return entry
         categories = ['Name','Condition','Date','Time','Target','Hemisphere',
-                      'Intensity','RMT','FS Dir', 'BEM File', 'Source File',
-                      'Coord Transf File','Description']
+                      'Intensity','RMT','Description','FS Dir','BEM File',
+                      'Source File','Coord Transf File']
+        browse_dict = {'FS Dir':'dir','BEM File':(('bemf','*-bem-sol.fif'),),
+                       'Source File':(('src','*-src.fif'),),
+                       'Coord Transf File':(('COR','*-COR-fif'),)}
         for i,text in enumerate(categories):
             y0 = 0.2 + i * 0.7/(len(categories)+1)
             y1 = 0.2 + (i+1) * 0.7/(len(categories)+1)
-            make_data_label(y0,y1,text)
+            make_data_label(y0,y1,text,browse=(browse_dict[text] if 
+                                               text in browse_dict else None))
         save_button = Button(self.getFrame(0.85,0.925,0.45,0.55),text='Save',
                                       font=self.medium_font)
         save_button.pack(fill='both',expand=1)
