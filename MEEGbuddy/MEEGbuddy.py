@@ -3591,6 +3591,14 @@ class MEEGbuddy:
                         con = con.squeeze()
                         self._save_wc(con,event,condition,value,band_name,
                                       data_type=dt,keyword=keyword_out)
+                    if not overwrite and ((gif_combine and 
+                        op.isfile(self._fname('plots','connectivity','gif',
+                                              event,condition,value,keyword_out,
+                                              *views))) or
+                        all([op.isfile(self._fname('plots','connectivity','gif',
+                                                   event,condition,value,keyword_out,
+                                                   view)) for view in views])):
+                        continue
                     con_sorted = np.sort(con, axis=None)
                     vmin = con_sorted[-int(threshold/len(epo.times)*con.size)]
                     vmax = con_sorted[-1]
