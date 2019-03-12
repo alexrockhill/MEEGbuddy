@@ -20,7 +20,8 @@ First install anaconda (recommended) (https://www.anaconda.com/distribution/#dow
 1. run "pip install MEEGbuddy,numpy"
 2. run "pip install -r requirements.txt"
 3. (Optional) Install freesurfer (https://surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall) 
-4. (Optional) Add "alias mb 'cd /Path/to/MEEGbuddyDemo/or/your/project; source /Path/to/where/you/want/to/store/your/venv/bin/activate; export FREESURFER_HOME=/Path/to/freesurfer; source $FREESURFER_HOME/SetUpFreeSurfer.sh' " so that you can type "mb" into a terminal to activate your project. Note you need to have installed freesurfer for the last two commands in the alias (export ... and source $FREESURFER...)
+4. (Optional) Install MNE C (https://martinos.org/mne/stable/install_mne_c.html) (this has command line functions, which, espeically "mne_analyze" have useful GUIs, in that case for coordinate frame coregistration (MRI to MEEG).
+5. (Optional) Add "alias mb 'cd /Path/to/MEEGbuddyDemo/or/your/project; source /Path/to/where/you/want/to/store/your/venv/bin/activate; export FREESURFER_HOME=/Path/to/freesurfer; source $FREESURFER_HOME/SetUpFreeSurfer.sh' " so that you can type "mb" into a terminal to activate your project. Note you need to have installed freesurfer for the last two commands in the alias (export ... and source $FREESURFER...)
 
 To run the demo:
 1. install jupyter if you haven't already: run "pip install jupyter"
