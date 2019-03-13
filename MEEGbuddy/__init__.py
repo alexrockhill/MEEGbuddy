@@ -1,4 +1,4 @@
-""" MEEG Resources from MGH Division of Neurotherapeutics """
+""" MEEGbuddy Alex Rockhill aprockhill206@gmail.com """
 
 __version__ = '0.0.dev0'
 
@@ -9,3 +9,4 @@ from . import pci
 from .psd_multitaper_plot_tools import (DraggableResizeableRectangle,
                                         ButtonClickProcessor)
 from . import gif_combine #import combine_gifs
+from . import bv2fif

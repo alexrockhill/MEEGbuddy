@@ -1,5 +1,5 @@
 import subprocess
-import op as op
+import os.path as op
 import os,sys,mne
 from tkinter import messagebox
 from tkinter import simpledialog
@@ -42,6 +42,242 @@ class TMS_EEG_GUI(Frame):
         #self.load_or_init_screen()
         #self.trials_rejection_screen()
 
+    def label(self,loc,text,font):
+        Label(self.getFrame(*loc),text=text,
+              wraplength=(loc[3]-loc[2])*self.size,font=font
+              ).pack(fill='both',expand=1)
+
+
+    def entry(self,loc,text,font,default=None):
+        entry = Entry(self.getFrame(*loc),font=font)
+        entry.pack(fill='both',expand=1)
+        entry.focus_set()
+        if default is not None:
+            entry.insert(0,default)
+        self.data_entries[text] = entry
+        return entry
+
+
+    def file_button(self,loc,text,font,ftypes):
+        file_button = Button(self.getFrame(*loc),text='Browse',
+                                font=font)
+        file_button.pack(fill='both',expand=1)
+        file_button.configure(command =
+            lambda: self.show_file_browser(self.data_entries[text],ftypes))
+
+
+    def button(self,loc,text,font,command):
+        button = Button(self.getFrame(*loc),text=text,font=font)
+        button.pack(fill='both',expand=1)
+        button.configure(command=self.recon)
+
+
+    def text(self,loc,text,font):
+        output = Text(self.getFrame(*loc),font=font)
+        output.pack(fill='both',expand=1)
+        self.data_entries[text] = output
+
+    def recon_screen(self):
+        self.data_entries = {}
+        # Headers
+        self.label([0,0.05,0,1],'Freesurfer Reconstruction',self.large_font)
+        # File loaders
+        self.label([0.05,0.15,0,0.25],'T1 Image Location',self.large_font)
+        self.entry([0.05,0.15,0.25,0.75],'T1 Image Location',self.large_font)
+        self.file_button([0.05,0.15,0.75,1],'T1 Image Location',self.large_font,
+                         (('mgz', '*.mgz'),('nii', '*.nii'),('mgh', '*.mgh'),('dicom', '*')))
+        self.label([0.15,0.25,0,0.25],'FLASH Image Location (optional)',self.large_font)
+        self.entry([0.15,0.25,0.25,0.75],'FLASH Image Location (optional)',self.large_font)
+        self.file_button([0.15,0.25,0.75,1],'FLASH Image Location (optional)',self.large_font,
+                         (('mgz', '*.mgz'),('nii', '*.nii'),('mgh', '*.mgh'),('dicom', '*')))
+
+        self.label([0.25,0.35,0,0.25],'Subject',self.large_font)
+        self.entry([0.25,0.35,0.25,0.75],'Subject',self.large_font)
+
+        self.label([0.35,0.45,0,0.25],'Subjects Directory',self.large_font)
+        self.entry([0.35,0.45,0.25,0.75],'Subjects Directory',self.large_font)
+        self.file_button([0.35,0.45,0.75,1],'Subjects Directory',self.large_font,'dir')
+
+        self.label([0.45,0.55,0,0.25],'Boundary Element Model',self.medium_font)
+        self.label([0.45,0.50,0.25,0.45],'ico',self.medium_font)
+        self.entry([0.50,0.55,0.25,0.45],'ico',self.medium_font,default='4')
+        self.label([0.45,0.50,0.45,0.65],'conductivity',self.medium_font)
+        self.entry([0.50,0.55,0.45,0.65],'conductivity',self.medium_font,
+                   default='(0.3, 0.006, 0.3)')
+        self.label([0.45,0.50,0.65,1],'BEM fname',self.medium_font)
+        self.entry([0.50,0.55,0.65,1],'BEM fname',self.medium_font,
+                   default='-bem-sol.fif')
+
+        self.label([0.55,0.65,0,0.25],'Source Space',self.medium_font)
+        self.label([0.55,0.60,0.25,0.45],'spacing',self.medium_font)
+        self.entry([0.60,0.65,0.25,0.45],'spacing',self.medium_font,
+                   default='oct6')
+        self.label([0.55,0.60,0.45,0.65],'surface',self.medium_font)
+        self.entry([0.60,0.65,0.45,0.65],'surface',self.medium_font,
+                   default='white')
+        self.label([0.55,0.60,0.65,1.0],'SRC fname',self.medium_font)
+        self.entry([0.60,0.65,0.65,1.0],'SRC fname',self.medium_font,
+                   default='-src.fif')
+
+        self.text([0.65,0.85,0.1,0.9],'Command Output',self.medium_font)
+
+        self.button([0.85,0.925,0.45,0.55],'Recon',self.medium_font,self.recon)
+        self.button([0.85,0.925,0.85,0.95],'Skip',self.medium_font,
+                    self.transition_load_init_screen)
+
+
+    def recon(self):
+        subject = self.data_entries['Subject'].get()
+        os.environ['SUBJECT'] = subject
+        subjects_dir = self.data_entries['Subjects Directory'].get()
+        os.environ['SUBJECTS_DIR'] = subjects_dir
+        try:
+            self.output_to_terminal('source $FREESURFER_HOME/SetUpFreeSurfer.sh')
+        except:
+            raise ValueError('Freesurfer not installed or installed correctly. ' + 
+                             'Make sure $FREESURFER_HOME is defined correctly.' +
+                             'See https://surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall')
+        try:
+            shell = op.basename(os.environ['SHELL'])
+            if shell == 'bash' or shell == 'tcsh':  # might have to change these only tested for tcsh
+                self.output_to_terminal('source $MNE_ROOT/bin/mne_setup_sh')
+            elif shell == 'csh':
+                self.output_to_terminal('source $MNE_ROOT/bin/mne_setup')
+            else:
+                raise ValueError('Shell not bash or csh or not understood')
+        except:
+            raise ValueError('MNE_C not installed or installed correctly. ' +
+                             'Make sure $MNE_ROOT is defined correctly. ' +
+                             'See https://martinos.org/mne/stable/install_mne_c.html')
+
+        t1 = self.data_entries['T1 Image Location'].get()
+        if op.isdir(op.join(subjects_dir,subject,'mri')):
+            self.print_to_terminal('Recon already run, skipping')
+        else:
+            self.output_to_terminal('recon-all -subjid %s ' %(subject) + 
+                                    '-i %s --all' %(t1))
+
+        ico = int(self.data_entries['ico'].get())
+        conductivity = np.array(self.data_entries['conductivity'].get())
+        spacing = self.data_entries['spacing'].get(),
+        surface=self.data_entries['surface'].get()
+
+        srcf = op.join(subjects_dir,subject,'src',
+                       self.data_entries['SRC fname'].get())
+        '''if op.isfile(srcf):
+            raise ValueError('Source file already exists, change name or delete original file')
+        src = mne.setup_source_space(subject,spacing=spacing,surface=surface,
+                                     subjects_dir=subjects_dir,add_dist=False)
+        src.save(srcf)'''
+        
+        self.output_to_terminal('mne_setup_source_space --spacing %s ' %(spacing) +
+                                '--ico %i --surf %s --cps ' %(ico,surface) + 
+                                '--src %s --overwrite' %(srcf))
+        #Organize flash if supplied
+        flash = self.data_entries['FLASH Image Location (optional)'].get()
+        if flash:
+            if op.isdir(op.join(subjects_dir,subject,'/flash05')):
+                os.rmdir(op.join(subjects_dir,subject,'/flash05'))
+            os.makedirs(op.join(subjects_dir,subject,'/flash05'))
+            os.chdir(op.join(subjects_dir,subject,'/flash05'))
+            flash_dir = os.dirname(self.data_entries['Flash'].get())
+            self.output_to_terminal('mne_organize_dicom %s' %(flash_dir))
+            new_flash_dir = op.join(subjects_dir,subject,'flash05',op.basename(flash_dir)
+                                         +'_MEFLASH_8e_05deg')
+            self.output_to_terminal('ln -s %s flash05' %(new_flash_dir))
+            self.output_to_terminal('mne_flash_bem --noflash30')
+            self.output_to_terminal('freeview -v %s/%s/mri/T1.mgz ' %(subjects_dir,subject) + 
+                '-f %s/%s/bem/flash/inner_skull.surf ' %(subjects_dir,subject)+
+                '-f %s/%s/bem/flash/outer_skull.surf ' %(subjects_dir,subject)+
+                '-f %s/%s/bem/flash/outer_skin.surf' %(subjects_dir,subject))
+            for area in ['inner_skull','outer_skull','outer_skin']:
+                link = op.join(subjects_dir,subject,'bem','%s.surf' %(area))
+                flash_link = op.join(subjects_dir,subject,'bem','flash',
+                                         '%s_%s_surface' %(subject,area))
+                if op.isfile(link):
+                    os.remove(link)
+                self.output_to_terminal('ln -s %s %s' %(flash_link,link))
+        else:
+            self.output_to_terminal('mne_watershed_bem --subject %s --atlas' %(subject))
+            self.output_to_terminal('freeview -v %s/%s/mri/T1.mgz ' %(subjects_dir,subject) + 
+                 '-f %s/%s/bem/watershed/%s_inner_skull_surface ' %(subjects_dir,subject,subject) +
+                 '-f %s/%s/bem/watershed/%s_outer_skull_surface ' %(subjects_dir,subject,subject)+ 
+                 '-f %s/%s/bem/watershed/%s_outer_skin_surface' %(subjects_dir,subject,subject))
+            for area in ['inner_skull','outer_skull','outer_skin']:
+                link = op.join(subjects_dir,subject,'bem','%s.surf' %(area))
+                watershed_link = op.join(subjects_dir,subject,'bem','watershed',
+                                         '%s_%s_surface' %(subject,area))
+                if op.isfile(link):
+                    os.remove(link)
+                self.output_to_terminal('ln -s %s %s' %(watershed_link,link))
+        # BEM
+        # if this fails, here is the work around https://github.com/ezemikulan/blender_freesurfer
+        # you also need this https://github.com/andersonwinkler/toolbox for the brainder commands (in toolbox/bin)
+        bemf = op.join(subjects_dir,subject,'bem',
+                       self.data_entries['BEM fname'].get())
+        '''if op.isfile(bemf):
+            print('WARNING, BEM file already exists, overwriting original file')
+        model = mne.make_bem_model(subject=subject,ico=ico,conductivity=conductivity,
+                                   subjects_dir=subjects_dir)
+        bem = mne.make_bem_silution(model)
+        mne.write_bem_solution(bemf,bem)'''
+
+        self.output_to_terminal('mne_setup_forward_model --subject %s --surf' %(subject) + 
+                                '--ico %i --brainc %f --skullc %f --scalpc %f' %(ico,*conductivity) +
+                                '--innershift %i --model %s' %(2 if flash else -1,bemf))
+        if not op.isfile(bemf):
+            raise ValueError('Forward model failed, likely due to errors in ' + 
+                             'freesurfer reconstruction and segementation. ' + 
+                             'See https://github.com/ezemikulan/blender_freesurfer ' +
+                             'for a workaround, functions from ' + 
+                             'https://github.com/andersonwinkler/toolbox are needed too')
+        os.chdir(subjects_dir)
+
+        # make head model
+        self.output_to_terminal('mkheadsurf -subjid %s' %(subject))
+        os.chdir(op.join(subjects_dir,subject,'bem'))
+        self.output_to_terminal('mne_surf2bem --surf ' +
+                                '%s/surf/lh.seghead ' %(op.join(subjects_dir,subject)) +
+                                '--id 4 --force --fif %s-head.fif'  %(subject))
+        os.chdir(subjects_dir)
+
+        self.output_to_terminal('mne_setup_mri')
+
+        messagebox.showinfo('Coregistration','In this next interactive GUI, will need to\n' +
+                            '1. Load the pial surface file -> Load Surface -> Select Pial Surface\n' +
+                            '2. Load the subject\'s digitization data: File -> Load digitizer data ->' +
+                            ' Select the raw data file for this session\n' + 
+                            '3. Open the coordinate alignment window: Adjust -> Coordinate Alignment\n' + 
+                            '4. Open the viewer window: View -> Show viewer\n' +
+                            '5. In the coordinate alignment window, click RAP, LAP and Naision, ' + 
+                            'and then after clicking each of those click on the corresponing ' +
+                            'fiducial points on the reconstructed head model\n' +
+                            '6. Click align using fiducials\n' +
+                            '7. In the View window: select Options -> Show digitizer data\n'
+                            '8. Adjust the x, y and z coordinates and rotation until ' +
+                            'the alignment is as close to the ground truth as possible\n' +
+                            'If you don\'t know these instructions, feel free to copy and paste')
+
+        self.output_to_terminal('mne_analyze')
+
+
+    def output_to_terminal(self,command):
+        output = subprocess.Popen([command],env=os.environ,
+                                  shell=True,stdout=subprocess.PIPE)
+        while True:
+            line = output.stdout.readline()
+            self.data_entries['Command Output'].insert('end',line)
+            if not line: break
+
+
+    def print_to_terminal(self,text):
+        self.data_entries['Command Output'].insert('end','\n' + text)
+
+
+    def transition_load_init_screen(self):
+        self.clear_screen()
+        self.load_or_init_screen()
+
     def init_data_dir(self):
         self.data_dir = './TMS_EEG_GUI_data'
         if not op.isdir(self.data_dir):
@@ -55,17 +291,21 @@ class TMS_EEG_GUI(Frame):
             self.sub_dirs[sub_dir_name] = sub_dir_full_path
 
     def show_file_browser(self,entry,ftypes):
+        initialdir = (os.environ['SUBJECTS_DIR'] if 
+                      'SUBJECTS_DIR' in os.environ else None)
         if ftypes == 'dir':
-            fname = askdirectory(title='Select directory')
+            fname = askdirectory(initialdir=initialdir,
+                                 title='Select directory')
         else:
-            fname = askopenfilename(title='Select file',filetypes=ftypes)
+            fname = askopenfilename(initialdir=initialdir, 
+                                    title='Select file',filetypes=ftypes)
         entry.delete(0,'end')
         entry.insert(0,fname)
 
     def save_setup(self):
         de = self.data_entries.copy()
-        raw_fname = de.pop('New File').get()
-        loc_fname = de.pop('Loc File').get()
+        raw_fname = de.pop('Load New File').get()
+        loc_fname = de.pop('Load Location File').get()
         suffix = raw_fname.split('.')[-1]
         if suffix == 'fif':
             try:
@@ -170,6 +410,7 @@ class TMS_EEG_GUI(Frame):
         with open(exp_fname,'w') as f:
             json.dump(self.data,f)
 
+
     def load_exp(self,fname):
         with open(op.join(self.sub_dirs['saved_exp'],fname),'r') as f:
             self.data = json.load(f)
@@ -177,6 +418,7 @@ class TMS_EEG_GUI(Frame):
                 if key in self.data_entries:
                     self.data_entries[key].delete(0,'end')
                     self.data_entries[key].insert(0,self.data[key])
+
 
     def getFrame(self,y0,y1,x0,x1):
         frame = Frame(self.root,
@@ -186,212 +428,19 @@ class TMS_EEG_GUI(Frame):
         frame.place(x=x0*self.size,y=y0*self.size)
         return frame
 
-    def recon_screen(self):
-        self.data_entries = {}
-        # Headers
-        Label(self.getFrame(0,0.15,0,1),text='Freesurfer Reconstruction',
-              font=self.large_font).pack(fill='both',expand=1)
-        # File loaders
-        Label(self.getFrame(0.15,0.25,0,0.25),text='T1 image Location',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        t1 = Entry(self.getFrame(0.15,0.25,0.25,0.75),font=self.medium_font)
-        t1.pack(fill='both',expand=1)
-        t1.focus_set()
-        t1_file_button = Button(self.getFrame(0.15,0.25,0.75,1),text='Browse',
-                                font=self.medium_font)
-        t1_file_button.pack(fill='both',expand=1)
-        t1_file_button.configure(command =
-            lambda: self.show_file_browser(t1,(('mgz', '*.mgz'),
-                                               ('nii', '*.nii'),
-                                               ('mgh', '*.mgh'),
-                                               ('dicom', '*'))))
-        self.data_entries['T1'] = t1
-        Label(self.getFrame(0.25,0.35,0,0.25),text='Subject',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        sub = Entry(self.getFrame(0.25,0.35,0.25,1),font=self.medium_font)
-        sub.pack(fill='both',expand=1)
-        sub.focus_set()
-        self.data_entries['Subject'] = sub
-
-        Label(self.getFrame(0.35,0.45,0,0.25),text='Subjects Directory',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        subs_dir = Entry(self.getFrame(0.35,0.45,0.25,1),font=self.medium_font)
-        subs_dir.pack(fill='both',expand=1)
-        subs_dir.focus_set()
-        self.data_entries['FS Dir'] = subs_dir
-
-        Label(self.getFrame(0.45,0.55,0,0.25),text='Boundary Element Model',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        Label(self.getFrame(0.45,0.50,0.25,0.45),text='ico',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        ico = Entry(self.getFrame(0.50,0.55,0.25,0.45),font=self.medium_font)
-        ico.pack(fill='both',expand=1)
-        ico.focus_set()
-        ico.insert(0,'4')
-        self.data_entries['Ico'] = ico
-
-        Label(self.getFrame(0.45,0.50,0.45,0.65),text='conductivity',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        cond = Entry(self.getFrame(0.50,0.55,0.45,0.65),font=self.medium_font)
-        cond.pack(fill='both',expand=1)
-        cond.focus_set()
-        cond.insert(0,'(0.3, 0.006, 0.3)')
-        self.data_entries['Conductivity'] = cond
-
-        Label(self.getFrame(0.45,0.50,0.65,1),text='name',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        bemf = Entry(self.getFrame(0.50,0.55,0.65,1),font=self.medium_font)
-        bemf.pack(fill='both',expand=1)
-        bemf.focus_set()
-        bemf.insert(0,'-bem-sol.fif')
-        self.data_entries['BEM File'] = bemf
-
-        Label(self.getFrame(0.55,0.65,0,0.25),text='Source Space',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        Label(self.getFrame(0.55,0.60,0.25,0.45),text='spacing',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        spacing = Entry(self.getFrame(0.60,0.65,0.25,0.45),font=self.medium_font)
-        spacing.pack(fill='both',expand=1)
-        spacing.focus_set()
-        spacing.insert(0,'oct6')
-        self.data_entries['Spacing'] = spacing
-
-        Label(self.getFrame(0.55,0.60,0.45,0.65),text='surface',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        surface = Entry(self.getFrame(0.60,0.65,0.45,0.65),font=self.medium_font)
-        surface.pack(fill='both',expand=1)
-        surface.focus_set()
-        surface.insert(0,'white')
-        self.data_entries['Surface'] = surface
-
-        Label(self.getFrame(0.55,0.60,0.65,1.0),text='name',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        srcf = Entry(self.getFrame(0.60,0.65,0.65,1.0),font=self.medium_font)
-        srcf.pack(fill='both',expand=1)
-        srcf.focus_set()
-        srcf.insert(0,'-src.fif')
-        self.data_entries['SRC File'] = srcf
-
-        cmd_output = Text(self.getFrame(0.65,0.85,0.1,0.9))
-        cmd_output.pack(fill='both',expand=1)
-        self.data_entries['Command Output'] = cmd_output
-
-        recon_button = Button(self.getFrame(0.85,0.925,0.45,0.55),text='Recon',
-                                      font=self.medium_font)
-        recon_button.pack(fill='both',expand=1)
-        recon_button.configure(command=self.recon)
-        skip_button = Button(self.getFrame(0.85,0.925,0.85,0.95),text='Skip',
-                                      font=self.medium_font)
-        skip_button.pack(fill='both',expand=1)
-        skip_button.configure(command=self.transition_load_init_screen)
-
-    def recon(self):
-        subject = self.data_entries['Subject'].get()
-        os.environ['SUBJECT'] = subject
-        subjects_dir = self.data_entries['FS Dir'].get()
-        os.environ['SUBJECTS_DIR'] = subjects_dir
-        try:
-            subprocess.call(['source $FREESURFER_HOME/SetUpFreeSurfer.sh'],
-                            env=os.environ,shell=True)
-        except:
-            raise ValueError('Freesurfer not installed or installed correctly. ' + 
-                             'Make sure $FREESURFER_HOME is defined correctly.')
-        try:
-            if os.environ['SHELL'] == '/bin/bash':
-                subprocess.call(['source $MNE_ROOT/bin/mne_setup_sh'],
-                                   env=os.environ,shell=True)
-            elif os.environ['SHELL'] == '/bin/csh':
-                subprocess.call(['source $MNE_ROOT/bin/mne_setup'],
-                                   env=os.environ,shell=True)
-            else:
-                raise ValueError('Shell not bash or csh or not understood')
-        except:
-            raise ValueError('MNE_C not installed or installed correctly. ' +
-                             'Make sure $MNE_ROOT is defined correctly.')
-
-        output = subprocess.Popen(['recon-all -subjid %s ' %(subject) + 
-                                   '-i %s --all' %(self.data_entries['T1'])],
-                                   env=os.environ,shell=True,stdout=subprocess.PIPE)
-        while True:
-            line = output.stdout.readline()
-            self.data_entries['Command Output'].insert('end',line)
-            if not line: break
-
-        bemf = op.join(subjects_dir,subject,'bem',
-                       self.data_entries['BEM File'].get())
-        if op.isfile(bemf):
-            raise ValueError('BEM file already exists, change name or delete original file')
-        model = mne.make_bem_model(subject=subject,
-                                   ico=int(self.data_entries['Ico'].get()),
-                                   conductivity=np.array(self.data_entries['Conductivity'].get()),
-                                   subjects_dir=subjects_dir)
-        bem = mne.make_bem_silution(model)
-        mne.write_bem_solution(bemf,bem)
-
-        srcf = op.join(subjects_dir,subject,'src',
-                       self.data_entries['SRC File'].get())
-        if op.isfile(srcf):
-            raise ValueError('Source file already exists, change name or delete original file')
-        src = mne.setup_source_space(subject,spacing=self.data_entries['Spacing'].get(),
-                                     surface=self.data_entries['Surface'].get(),
-                                     subjects_dir=subjects_dir,add_dist=False)
-        src.save(srcf)
-
-        messagebox.showinfo('Coregistration','In this next interactive GUI, will need to\n' +
-                            '1. Load the pial surface file -> Load Surface -> Select Pial Surface\n' +
-                            '2. Load the subject\'s digitization data: File -> Load digitizer data ->' +
-                            ' Select the raw data file for this session\n' + 
-                            '3. Open the coordinate alignment window: Adjust -> Coordinate Alignment\n' + 
-                            '4. Open the viewer window: View -> Show viewer\n' +
-                            '5. In the coordinate alignment window, click RAP, LAP and Naision, ' + 
-                            'and then after clicking each of those click on the corresponing ' +
-                            'fiducial points on the reconstructed head model\n' +
-                            '6. Click align using fiducials\n' +
-                            '7. In the View window: select Options -> Show digitizer data\n'
-                            '8. Adjust the x, y and z coordinates and rotation until ' +
-                            'the alignment is as close to the ground truth as possible\n' +
-                            'If you don\'t know these instructions, feel free to copy and paste')
-
-        subprocess.call(['mne_analyze'], env=os.environ,shell=True)
-
-
-    def transition_load_init_screen(self):
-        self.clear_screen()
-        self.load_or_init_screen()
 
     def load_or_init_screen(self):
         self.data_entries = {}
         # Headers
-        Label(self.getFrame(0,0.1,0,0.5),text='Create New',
-              font=self.large_font).pack(fill='both',expand=1)
-        Label(self.getFrame(0,0.1,0.5,1),text='Load',
-              font=self.large_font).pack(fill='both',expand=1)
+        self.label([0,0.1,0,0.5],'Create New',self.large_font)
+        self.label([0,0.1,0.5,1],'Load',self.large_font)
         # File loaders
-        Label(self.getFrame(0.1,0.15,0,0.1),text='Load new raw file',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        new_file = Entry(self.getFrame(0.1,0.15,0.1,0.4),font=self.medium_font)
-        new_file.pack(fill='both',expand=1)
-        new_file.focus_set()
-        self.data_entries['New File'] = new_file
-        Label(self.getFrame(0.15,0.2,0,0.1),text='Load new location file',
-              wraplength=0.1*self.size,font=self.medium_font
-              ).pack(fill='both',expand=1)
-        loc_file = Entry(self.getFrame(0.15,0.2,0.1,0.4),font=self.medium_font)
-        loc_file.pack(fill='both',expand=1)
-        loc_file.focus_set()
-        self.data_entries['Loc File'] = loc_file
+        self.label([0.1,0.15,0,0.1],'Load New File',self.medium_font)
+        self.entry([0.1,0.15,0.1,0.4],'Load New File',self.medium_font)
+
+        self.label([0.15,0.2,0,0.1],'Load Location File',self.medium_font)
+        self.entry([0.15,0.2,0,0.1],'Load Location File',self.medium_font)
+
         load_new_file_button = Button(self.getFrame(0.1,0.15,0.4,0.5),text='Browse',
                                       font=self.medium_font)
         load_new_file_button.pack(fill='both',expand=1)

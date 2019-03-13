@@ -2917,7 +2917,7 @@ class MEEGbuddy:
     def sourceBootstrap(self,event,condition=None,values=None,
                         keyword_in=None,keyword_out=None,
                         snr=1.0,method='dSPM',pick_ori='normal',tfr=True,
-                        itc=True,fmin=4,fmax=150,nmin=2,nmax=75,steps=32,
+                        itc=False,fmin=4,fmax=150,nmin=2,nmax=75,steps=32,
                         bands={'theta':(4,8),'alpha':(8,15),
                                'beta':(15,30),'low-gamma':(30,80),
                                'high-gamma':(80,150)},
@@ -2969,18 +2969,21 @@ class MEEGbuddy:
         events = epochs.events[:,2]
         bl_events = bl_epochs.events[:,2]
 
-        stcs = np.memmap('sb_%s_%s_workfile' %(event,keyword_out),
-                 dtype='float64', mode='w+',
-                 shape=(batch,fwd['nsource'],len(epochs.times)))
+        stcs = np.memmap(op.join(self.subjects_dir,
+                                 'sb_%s_%s_workfile' %(event,keyword_out)),
+                         dtype='float64', mode='w+',
+                         shape=(batch,fwd['nsource'],len(epochs.times)))
         if tfr:
             Ws = morlet(epochs.info['sfreq'],freqs,n_cycles=n_cycles,
                         zero_mean=False)
-            powers = {band:np.memmap('sb_tfr_%s_%s_workfile' %(event,keyword_out),
+            powers = {band:np.memmap(op.join(self.subjects_dir,
+                                             'sb_tfr_%s_%s_workfile' %(event,keyword_out)),
                                      dtype='float64', mode='w+',
                                      shape=(batch,fwd['nsource'],len(epochs.times)))
                       for band in bands}
             if itc:
-                itcs = {band:np.memmap('sb_tfr_%s_%s_workfile' %(event,keyword_out),
+                itcs = {band:np.memmap(op.join(self.subjects_dir,
+                                               'sb_tfr_%s_%s_workfile' %(event,keyword_out)),
                                         dtype='float64', mode='w+',
                                         shape=(batch,fwd['nsource'],len(epochs.times)))
                       for band in bands}
@@ -3011,7 +3014,7 @@ class MEEGbuddy:
                                    mode=mode)
                     power = (this_tfr * this_tfr.conj()).real
                     if itc:
-                        this_itc = np.angle(this_tfr)
+                        this_itc = np.angle(this_tfr) # Inter-trial Coherence
                     for band,inds in band_inds.items():
                         powers[band][i] = power[:,inds].mean(axis=1)
                         if itc:
@@ -3593,10 +3596,12 @@ class MEEGbuddy:
                                       data_type=dt,keyword=keyword_out)
                     if not overwrite and ((gif_combine and 
                         op.isfile(self._fname('plots','connectivity','gif',
-                                              event,condition,value,keyword_out,
+                                              event,condition,value,
+                                              band_name,dt,keyword_out,
                                               *views))) or
                         all([op.isfile(self._fname('plots','connectivity','gif',
-                                                   event,condition,value,keyword_out,
+                                                   event,condition,value,
+                                                   band_name,dt,keyword_out,
                                                    view)) for view in views])):
                         continue
                     con_sorted = np.sort(con, axis=None)
@@ -3645,16 +3650,15 @@ class MEEGbuddy:
                             return mlab.screenshot(antialiased=True)
 
                         anim = mpy.VideoClip(make_frame,duration=time_dilation*(tmax-tmin))
-                        fname = self._fname('plots','connectivity','gif',
-                                                   event,condition,value,
-                                                   keyword_out,view)
+                        fname = self._fname('plots','connectivity','gif',event,condition,
+                                            value,band_name,dt,keyword_out,view)
                         gif_names.append(fname)
                         anim.write_gif(fname,fps=fps)
                         mlab.close(fig)
                     if gif_combine:
                         print('Combining gifs for %s' %(value))
                         anim = combine_gifs(self._fname('plots','connectivity','gif',
-                                                        event,condition,value,
+                                                        event,condition,value,band_name,dt,
                                                         keyword_out,*views),
                                             fps,*gif_names)
 
