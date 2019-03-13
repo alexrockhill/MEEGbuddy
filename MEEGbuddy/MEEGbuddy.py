@@ -318,6 +318,10 @@ class MEEGbuddy:
             fname += '_eeg'
         if self.meg:
             fname += '_meg'
+        if self.ecog:
+            fname += '_ecog'
+        if self.seeg:
+            fname += '_seeg'
         for tag in tags:
             if tag:
                 fname += '_' + str(tag).replace(' ','_')
@@ -2932,8 +2936,8 @@ class MEEGbuddy:
         bl_epochs = self._load_epochs('Baseline',keyword=keyword_in)
         keyword_out = keyword_in if keyword_out is None else keyword_out
         fname = self._fname('analyses','bootstrap','npz',event,keyword_out)
-        if os.path.isfile(fname) and not overwrite:
-            self._overwrite_error('Bootstraps',keyword_out)
+        if False: #os.path.isfile(fname) and not overwrite:
+            self._overwrite_error('Bootstraps',event=event,keyword=keyword_out)
         if condition is None:
             print('Making bootstrapped source estimates using evokeds ' +
                   'of size %i to prepare to correlate the average ' %(Nave) +
@@ -3003,7 +3007,8 @@ class MEEGbuddy:
                 indices = bootstrap_indices[k]
                 bl_indices = [np.where(bl_events == j)[0][0]
                               for j in events[indices]]
-                inv = self._generate_inverse(epochs,fwd,bl_epochs[bl_indices],
+                inv = self._generate_inverse(epochs[indices],fwd,
+                                             bl_epochs[bl_indices],
                                              lambda2,method,pick_ori)
                 evoked = epochs[indices].average()
                 stc = apply_inverse(evoked,inv,lambda2=lambda2,method=method,
@@ -3033,6 +3038,40 @@ class MEEGbuddy:
                                              'npz','%i-%i' %(i_min,i_max),event,
                                              keyword_out)
                         np.savez_compressed(fname4,itcs=itcs[band])
+        if condition is not None:
+            value_indices = self._get_indices(epochs,condition,values)
+            for value in values:
+                print('Making base source estimate for %s' %(value))
+                fname2 = self._fname('analyses','bootstrap','npz',
+                                     event,condition,value,keyword_out)
+                indices = value_indices[value]
+                bl_indices = [np.where(bl_events == j)[0][0]
+                              for j in events[indices]]
+                inv = self._generate_inverse(epochs[indices],fwd,
+                                             bl_epochs[bl_indices],
+                                             lambda2,method,pick_ori)
+                evoked = epochs[indices].average()
+                stc = apply_inverse(evoked,inv,lambda2=lambda2,method=method,
+                                    pick_ori=pick_ori)
+                np.savez_compressed(fname2,stc=stc.data[:])
+                if tfr:
+                    this_tfr = cwt(stc.data.copy(),Ws,use_fft=use_fft,
+                                   mode=mode)
+                    power = (this_tfr * this_tfr.conj()).real
+                    if itc:
+                        this_itc = np.angle(this_tfr) # Inter-trial Coherence
+                    for band,inds in band_inds.items():
+                        fname3 = self._fname('analyses',
+                                             'bootstrap_power_%s' %(band),
+                                             'npz',event,condition,value,
+                                             keyword_out)
+                        np.savez_compressed(fname3,power=power[:,inds].mean(axis=1))
+                        if itc:
+                            fname4 = self._fname('analyses',
+                                             'bootstrap_itc_%s' %(band),
+                                             'npz',event,condition,value,
+                                             keyword_out)
+                            np.savez_compressed(fname4,itc=this_itc[:,inds].mean(axis=1))
         inv = self._generate_inverse(epochs,fwd,bl_epochs,lambda2,method,
                                      pick_ori)
         evoked = epochs.average()
@@ -3044,9 +3083,9 @@ class MEEGbuddy:
         self._save_source(stc,event,'Bootstrap','base',keyword=keyword_out)
 
 
-    def sourcePermutation(self,event,condition,keyword_in=None,
+    def sourcePermutation(self,event,condition,values=None,keyword_in=None,
                           keyword_out=None,baseline=(-0.5,-0.1),
-                          n_permutations=1000,correlation=False,
+                          n_permutations=2000,correlation=False,
                           overwrite=False):
         ''' baseline only supported in source window (this also means
             locked to the same event as the source estimate) due to
@@ -3055,13 +3094,16 @@ class MEEGbuddy:
         keyword_out = keyword_in if keyword_out is None else keyword_out
         fname_in = self._fname('analyses','bootstrap','npz',event,
                                keyword_in)
-        fname_out = self._fname('analyses','correlation','npz',event,
-                                keyword_in)
+        analysis_name = 'correlation' if correlation else 'permutation'
+        fname_out = self._fname('analyses',analysis_name,'npz',event,
+                                keyword_out)
         if not os.path.isfile(fname_in):
             raise ValueError('Bootstraps must be computed first' +
                              '(check that keywords match)')
-        if os.path.isfile(fname_out) and not overwrite:
-            raise ValueError('Correlations already exist, use overwrite=True')
+        values = self._default_values(condition,values=values)
+        if self._has_source(event,condition,'permutation',
+                            keyword=keyword_out) and not overwrite:
+            raise ValueError('%s already exist, use overwrite=True' (analysis_name.title()))
         f = np.load(fname_in)
         bootstrap_indices = f['bootstrap_indices']
         Nboot,Nave = bootstrap_indices.shape
@@ -3071,11 +3113,6 @@ class MEEGbuddy:
         itc = f['itc'].item()
         events = f['events']
         df = read_csv(self.behavior)
-        bootstrap_conditions = []
-        for i in range(Nboot):
-            bootstrap_conditions.append(
-                np.nanmean(np.array([df[condition][j]
-                                    for j in bootstrap_indices[i]])))
         stc = self._load_source(event,'Bootstrap','base',keyword=keyword_in)
         if baseline[0] < stc.tmin or baseline[1] > stc.times[-1]:
             raise ValueError('Baseline outside time range')
@@ -3114,7 +3151,7 @@ class MEEGbuddy:
         for i_min,i_max in zip(mins,maxs):
             print('Combining bootstraps %i to %i source' %(i_min,i_max),end='')
             fname2 = self._fname('analyses','bootstrap','npz',
-                                 '%i-%i' %(i_min,i_max),event,keyword_out)
+                                 '%i-%i' %(i_min,i_max),event,keyword_in)
             stcs2 = np.load(fname2)['stcs']
             for i,j in enumerate(range(i_min,i_max)):
                 stcs[j] = stcs2[i]
@@ -3125,13 +3162,13 @@ class MEEGbuddy:
                     fname3 = self._fname('analyses',
                                          'bootstrap_power_%s' %(band),
                                          'npz','%i-%i' %(i_min,i_max),event,
-                                         keyword_out)
+                                         keyword_in)
                     powers2 = np.load(fname3)['powers']
                     if itc:
                         print(' %s itc' %(band), end='')
                         fname4 = self._fname('analyses','bootstrap_itc_%s' %(band),
                                              'npz','%i-%i' %(i_min,i_max),event,
-                                             keyword_out)
+                                             keyword_in)
                         itcs2 = np.load(fname4)['itcs']
                     for i,j in enumerate(range(i_min,i_max)):
                         powers[band][j] = powers2[i]
@@ -3141,7 +3178,13 @@ class MEEGbuddy:
                     if itc:
                         del itcs2
             print(' Done.')
+
         if correlation:
+            bootstrap_conditions = []
+            for i in range(Nboot):
+                bootstrap_conditions.append(
+                    np.nanmean(np.array([df[condition][j]
+                                        for j in bootstrap_indices[i]])))
             # Get baseline distribution
             for s_ind in tqdm(range(nSRC)):
                 s_data = np.array(stcs[:,s_ind])
@@ -3165,45 +3208,98 @@ class MEEGbuddy:
                                 _,_,r,_,_ = linregress(itc_dist[permutation_indices[p_ind]],
                                                        bootstrap_conditions)
                                 itc_bl_dist[band][s_ind,p_ind] = r
-        # Get p-values from permutation distribution
-        for s_ind in tqdm(range(nSRC)):
-            s_data = np.array(stcs[:,s_ind])
+            # Get p-values from permutation distribution
+            for s_ind in tqdm(range(nSRC)):
+                s_data = np.array(stcs[:,s_ind])
+                if tfr:
+                    power_s_data = {band:powers[band][:,s_ind] for band in bands}
+                    if itc:
+                        itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
+                for t_ind in range(nTIMES):
+                    dist = s_data[:,t_ind]
+                    p = sum(abs(dist)<abs(this_stc[s_ind,t_ind]))/Nboot
+                    stc_result.data[s_ind,t_ind] = 1.0/p
+                    if tfr:
+                        for band in bands:
+                            power_dist = power_s_data[band][:,t_ind]
+                            p = sum(abs(power_dist[band])<
+                                    abs(this_power[band][s_ind,t_ind]))/Nboot
+                            power_result[band].data[s_ind,t_ind] = 1.0/p
+                            if itc:
+                                itc_dist = itc_s_data[band][:,t_ind]
+                                p = sum(abs(itc_dist[band])<
+                                        abs(this_itc[band][s_ind,t_ind]))/Nboot
+                                itc_result[band].data[s_ind,t_ind] = 1.0/p
+            self._save_source(stc_result,event,condition,'correlation',
+                              keyword=keyword_out)
             if tfr:
-                power_s_data = {band:powers[band][:,s_ind] for band in bands}
-                if itc:
-                    itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
-            for t_ind in range(nTIMES):
-                dist = s_data[:,t_ind]
-                _,_,r,_,_ = linregress(dist,bootstrap_conditions)
-                p = sum(abs(bl_dist[s_ind])>abs(r))/n_permutations
-                stc_result.data[s_ind,t_ind] = ((1.0/p)*np.sign(r) if p > 0 else
-                                                (1.0/n_permutations)*np.sign(r))
+                for band in bands:
+                    self._save_source(power_result[band],event,condition,
+                                      'power_correlation_%s' %(band),
+                                      keyword=keyword_out)
+                    if itc:
+                        self._save_source(itc_result[band],event,condition,
+                                          'itc_correlation_%s' %(band),
+                                          keyword=keyword_out)
+        else:
+            for value in values:
+                fname2 = self._fname('analyses','bootstrap','npz',
+                                     event,condition,value,keyword_in)
+                this_stc = np.load(fname2)['stcs']
+                if tfr:
+                    this_power = {}
+                    if itc:
+                        this_itc = {}
+                    for band in bands:
+                        fname3 = self._fname('analyses',
+                                             'bootstrap_power_%s' %(band),
+                                             'npz',event,condition,value,
+                                             keyword_in)
+                        this_power[band] = np.load(fname3)['powers']
+                        if itc:
+                            fname4 = self._fname('analyses',
+                                             'bootstrap_itc_%s' %(band),
+                                             'npz',event,condition,value,
+                                             keyword_in)
+                            this_itc[band] = np.load(fname3)['itcs']
+                # Get p-values from permutation distribution
+                for s_ind in tqdm(range(nSRC)):
+                    s_data = np.array(stcs[:,s_ind])
+                    if tfr:
+                        power_s_data = {band:powers[band][:,s_ind] for band in bands}
+                        if itc:
+                            itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
+                    for t_ind in range(nTIMES):
+                        dist = s_data[:,t_ind]
+                        p = sum(abs(dist)>abs(stc[s_ind,]))/n_permutations
+                        stc_result.data[s_ind,t_ind] = ((1.0/p)*np.sign(r) if p > 0 else
+                                                        (1.0/n_permutations)*np.sign(r))
+                        if tfr:
+                            for band in bands:
+                                power_dist = power_s_data[band][:,t_ind]
+                                _,_,r,_,_ = linregress(power_dist,bootstrap_conditions)
+                                p = sum(abs(power_bl_dist[band][s_ind])>abs(r))/n_permutations
+                                power_result[band].data[s_ind,t_ind] = \
+                                    ((1.0/p)*np.sign(r) if p > 0 else
+                                     (1.0/n_permutations)*np.sign(r))
+                                if itc:
+                                    itc_dist = itc_s_data[band][:,t_ind]
+                                    _,_,r,_,_ = linregress(itc_dist,bootstrap_conditions)
+                                    p = sum(abs(itc_bl_dist[band][s_ind])>abs(r))/n_permutations
+                                    itc_result[band].data[s_ind,t_ind] = \
+                                        ((1.0/p)*np.sign(r) if p > 0 else
+                                         (1.0/n_permutations)*np.sign(r))
+                self._save_source(stc_result,event,condition,'permutation',
+                                  keyword=keyword_out)
                 if tfr:
                     for band in bands:
-                        power_dist = power_s_data[band][:,t_ind]
-                        _,_,r,_,_ = linregress(power_dist,bootstrap_conditions)
-                        p = sum(abs(power_bl_dist[band][s_ind])>abs(r))/n_permutations
-                        power_result[band].data[s_ind,t_ind] = \
-                            ((1.0/p)*np.sign(r) if p > 0 else
-                             (1.0/n_permutations)*np.sign(r))
+                        self._save_source(power_result[band],event,condition,
+                                          'power_permutation_%s' %(band),
+                                          keyword=keyword_out)
                         if itc:
-                            itc_dist = itc_s_data[band][:,t_ind]
-                            _,_,r,_,_ = linregress(itc_dist,bootstrap_conditions)
-                            p = sum(abs(itc_bl_dist[band][s_ind])>abs(r))/n_permutations
-                            itc_result[band].data[s_ind,t_ind] = \
-                                ((1.0/p)*np.sign(r) if p > 0 else
-                                 (1.0/n_permutations)*np.sign(r))
-        self._save_source(stc_result,event,condition,'correlation',
-                          keyword=keyword_out)
-        if tfr:
-            for band in bands:
-                self._save_source(power_result[band],event,condition,
-                                  'power_correlation_%s' %(band),
-                                  keyword=keyword_out)
-                if itc:
-                    self._save_source(itc_result[band],event,condition,
-                                      'itc_correlation_%s' %(band),
-                                      keyword=keyword_out)
+                            self._save_source(itc_result[band],event,condition,
+                                              'itc_permutation_%s' %(band),
+                                              keyword=keyword_out)
 
 
 
