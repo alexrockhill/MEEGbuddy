@@ -298,10 +298,9 @@ class MEEGbuddy:
         if process_dir == 'plots':
             dirname = op.join(self.process_dirs[process_dir],keyword)
         elif process_dir == 'analyses':
-            dirname = op.join(self.process_dirs[process_dir],self.subject)
+            dirname = op.join(self.process_dirs[process_dir],keyword,self.subject)
             if self.session is not None:
                 dirname = op.join(dirname,self.session)
-            dirname = op.join(dirname,keyword)
         else:
             dirname = (op.join(self.process_dirs[process_dir],self.subject) if
                      self.session is None else
@@ -948,15 +947,21 @@ class MEEGbuddy:
                                  keyword=keyword_out)
             if isinstance(inst,BaseRaw):
                 for ch in eogs:
-                    evoked = self._load_evoked('ica_%s' %(ch),
-                                               data_type=dt,
-                                               keyword=keyword_out)
-                    self._plot_ICA_sources(ica,evoked,ch,show)
+                    try:
+                        evoked = self._load_evoked('ica_%s' %(ch),
+                                                   data_type=dt,
+                                                   keyword=keyword_out)
+                        self._plot_ICA_sources(ica,evoked,ch,show)
+                    except:
+                        print('%s dead/not working' %(ch))
                 for ecg in ecgs:
-                    evoked = self._load_evoked('ica_%s' %(ecg),
-                                               data_type=dt,
-                                               keyword=keyword_out)
-                    self._plot_ICA_sources(ica,evoked,ecg,show)
+                    try:
+                        evoked = self._load_evoked('ica_%s' %(ecg),
+                                                   data_type=dt,
+                                                   keyword=keyword_out)
+                        self._plot_ICA_sources(ica,evoked,ecg,show)
+                    except:
+                        print('%s dead/not working' %(ecg))
             fig = ica.plot_components(picks=np.arange(ica.get_components().shape[1]),
                                       show=False)
             fig.show()
@@ -964,15 +969,21 @@ class MEEGbuddy:
             inst2 = ica.apply(inst2,exclude=ica.exclude)
             if isinstance(inst,BaseRaw):
                 for ch in eogs:
-                    evoked = self._load_evoked('ica_%s' %(ch),
-                                               data_type=dt,
-                                               keyword=keyword_out)
-                    self._plot_ICA_overlay(ica,evoked,ch,show)
+                    try:
+                        evoked = self._load_evoked('ica_%s' %(ch),
+                                                   data_type=dt,
+                                                   keyword=keyword_out)
+                        self._plot_ICA_overlay(ica,evoked,ch,show)
+                    except:
+                        print('%s dead/not working' %(ch))
                 for ecg in ecgs:
-                    evoked = self._load_evoked('ica_%s' %(ecg),
-                                               data_type=dt,
-                                               keyword=keyword_out)
-                    self._plot_ICA_overlay(ica,evoked,ecg,show)
+                    try:
+                        evoked = self._load_evoked('ica_%s' %(ecg),
+                                                   data_type=dt,
+                                                   keyword=keyword_out)
+                        self._plot_ICA_overlay(ica,evoked,ecg,show)
+                    except:
+                        print('%s dead/not working' %(ecg))
             else:
                 fig = inst1b.average().plot(show=False,ylim=ylim,
                                             window_title='Before ICA')
@@ -1397,6 +1408,7 @@ class MEEGbuddy:
 
     def dropEpochsByBehaviorIndices(self,bad_indices,event,keyword_in=None,
                                     keyword_out=None):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
         df = read_csv(self.behavior)
         epochs = self._load_epochs(event,keyword=keyword_in)
         good_indices = [i for i in range(len(df)) if i not in bad_indices]
@@ -3217,19 +3229,25 @@ class MEEGbuddy:
                         itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
                 for t_ind in range(nTIMES):
                     dist = s_data[:,t_ind]
-                    p = sum(abs(dist)<abs(this_stc[s_ind,t_ind]))/Nboot
-                    stc_result.data[s_ind,t_ind] = 1.0/p
+                    _,_,r,_,_ = linregress(dist,bootstrap_conditions)
+                    p = sum(abs(bl_dist[s_ind])>abs(r))/n_permutations
+                    stc_result.data[s_ind,t_ind] = ((1.0/p)*np.sign(r) if p > 0 else
+                                                    (1.0/n_permutations)*np.sign(r))
                     if tfr:
                         for band in bands:
                             power_dist = power_s_data[band][:,t_ind]
-                            p = sum(abs(power_dist[band])<
-                                    abs(this_power[band][s_ind,t_ind]))/Nboot
-                            power_result[band].data[s_ind,t_ind] = 1.0/p
+                            _,_,r,_,_ = linregress(power_dist,bootstrap_conditions)
+                            p = sum(abs(power_bl_dist[band][s_ind])>abs(r))/n_permutations
+                            power_result[band].data[s_ind,t_ind] = \
+                                ((1.0/p)*np.sign(r) if p > 0 else
+                                 (1.0/n_permutations)*np.sign(r))
                             if itc:
                                 itc_dist = itc_s_data[band][:,t_ind]
-                                p = sum(abs(itc_dist[band])<
-                                        abs(this_itc[band][s_ind,t_ind]))/Nboot
-                                itc_result[band].data[s_ind,t_ind] = 1.0/p
+                                _,_,r,_,_ = linregress(itc_dist,bootstrap_conditions)
+                                p = sum(abs(itc_bl_dist[band][s_ind])>abs(r))/n_permutations
+                                itc_result[band].data[s_ind,t_ind] = \
+                                    ((1.0/p)*np.sign(r) if p > 0 else
+                                     (1.0/n_permutations)*np.sign(r))
             self._save_source(stc_result,event,condition,'correlation',
                               keyword=keyword_out)
             if tfr:
@@ -3258,9 +3276,9 @@ class MEEGbuddy:
                         this_power[band] = np.load(fname3)['powers']
                         if itc:
                             fname4 = self._fname('analyses',
-                                             'bootstrap_itc_%s' %(band),
-                                             'npz',event,condition,value,
-                                             keyword_in)
+                                                 'bootstrap_itc_%s' %(band),
+                                                 'npz',event,condition,value,
+                                                 keyword_in)
                             this_itc[band] = np.load(fname3)['itcs']
                 # Get p-values from permutation distribution
                 for s_ind in tqdm(range(nSRC)):
@@ -3271,24 +3289,19 @@ class MEEGbuddy:
                             itc_s_data = {band:itcs[band][:,s_ind] for band in bands}
                     for t_ind in range(nTIMES):
                         dist = s_data[:,t_ind]
-                        p = sum(abs(dist)>abs(stc[s_ind,]))/n_permutations
-                        stc_result.data[s_ind,t_ind] = ((1.0/p)*np.sign(r) if p > 0 else
-                                                        (1.0/n_permutations)*np.sign(r))
+                        p = sum(abs(dist)<abs(this_stc[s_ind,t_ind]))/Nboot
+                        stc_result.data[s_ind,t_ind] = 1.0/p
                         if tfr:
                             for band in bands:
                                 power_dist = power_s_data[band][:,t_ind]
-                                _,_,r,_,_ = linregress(power_dist,bootstrap_conditions)
-                                p = sum(abs(power_bl_dist[band][s_ind])>abs(r))/n_permutations
-                                power_result[band].data[s_ind,t_ind] = \
-                                    ((1.0/p)*np.sign(r) if p > 0 else
-                                     (1.0/n_permutations)*np.sign(r))
+                                p = sum(abs(power_dist)<
+                                        abs(this_power[band][s_ind,t_ind]))/Nboot
+                                power_result[band].data[s_ind,t_ind] = 1.0/p
                                 if itc:
                                     itc_dist = itc_s_data[band][:,t_ind]
-                                    _,_,r,_,_ = linregress(itc_dist,bootstrap_conditions)
-                                    p = sum(abs(itc_bl_dist[band][s_ind])>abs(r))/n_permutations
-                                    itc_result[band].data[s_ind,t_ind] = \
-                                        ((1.0/p)*np.sign(r) if p > 0 else
-                                         (1.0/n_permutations)*np.sign(r))
+                                    p = sum(abs(itc_dist)<
+                                            abs(this_itc[band][s_ind,t_ind]))/Nboot
+                                    itc_result[band].data[s_ind,t_ind] = 1.0/p
                 self._save_source(stc_result,event,condition,'permutation',
                                   keyword=keyword_out)
                 if tfr:
@@ -3330,7 +3343,7 @@ class MEEGbuddy:
                                  np.where(epochs.times<=bl_tmax))
         nTR = min([len(value_indices[value]) for value in value_indices])
 
-        def preprocess(epochs,indices,bl_tind,event,condition,value,nTR,keyword_in):
+        def preprocess(epochs,indices,bl_tind,event,condition,value,keyword_in):
             Y = epochs[indices].get_data()
             inv,lambda2,method,pick_ori = \
                 self._load_inverse(event,condition,value,keyword=keyword_in)
@@ -3398,8 +3411,7 @@ class MEEGbuddy:
         for value in ['all'] if shared_baseline else values:
             ''' Use separate baselines to threshold for significance because
             what is significant for sleep may not be for wake ect'''
-            if (os.path.isfile(self._fname('analyses','Threshold','npz',
-                                           keyword_out,event,condition,value))
+            if (self._has_noreun_baseline(event,condition,value,keyword_out)
                 and not recalculate_baseline):
                 print('Loading pre-computed bootstraps')
             else:
@@ -3409,7 +3421,7 @@ class MEEGbuddy:
                     indices = downsampleIndices(indices,nTR,condition,value)
                 Y,J,inv,lambda2,method,pick_ori,NUM,DEN,Norm = \
                     preprocess(epochs,indices,bl_tind,event,condition,value,
-                               nTR,keyword_in)
+                               keyword_in)
                 Threshold = baseline_bootstrap(Y,J,bl_tind,Norm,NUM,DEN,Nboot,
                                                alpha,info,inv,lambda2,method,
                                                pick_ori)
@@ -3418,16 +3430,19 @@ class MEEGbuddy:
                                            condition,value,keyword_out)
         # PCI by value
         for value in values:
-            if ((os.path.isfile(self._fname('analyses','PCI','npz',
-                                keyword_out,event,condition,value)))
+            if (self._has_noreun_PCI(event,condition,value,keyword_out)
                  and not recalculate_PCI):
                 print('PCI already computed')
             else:
+                indices = value_indices[value]
                 print('Running Lempel-Ziv compression for %s' %(value))
-                Y,J,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
+                _,_,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
                     self._load_noreun_baseline(event,condition,
                                                'all' if shared_baseline else value,
                                                keyword_out)
+                Y,J,inv,lambda2,method,pick_ori,NUM,DEN,Norm = \
+                    preprocess(epochs,indices,bl_tind,event,condition,value,
+                               keyword_in)
                 tind = gettind(epochs,tmin,tmax,npoint_art)
                 # determines sources matrices
                 binJ=np.array(np.abs(J)>Threshold,dtype=int)
