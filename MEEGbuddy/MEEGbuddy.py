@@ -2948,7 +2948,7 @@ class MEEGbuddy:
         bl_epochs = self._load_epochs('Baseline',keyword=keyword_in)
         keyword_out = keyword_in if keyword_out is None else keyword_out
         fname = self._fname('analyses','bootstrap','npz',event,keyword_out)
-        if False: #os.path.isfile(fname) and not overwrite:
+        if os.path.isfile(fname) and not overwrite:
             self._overwrite_error('Bootstraps',event=event,keyword=keyword_out)
         if condition is None:
             print('Making bootstrapped source estimates using evokeds ' +
@@ -3113,9 +3113,16 @@ class MEEGbuddy:
             raise ValueError('Bootstraps must be computed first' +
                              '(check that keywords match)')
         values = self._default_values(condition,values=values)
-        if self._has_source(event,condition,'permutation',
-                            keyword=keyword_out) and not overwrite:
-            raise ValueError('%s already exist, use overwrite=True' (analysis_name.title()))
+        if correlation:
+            if self._has_source(event,condition,'permutation',
+                                keyword=keyword_out) and not overwrite:
+                self._overwrite_error('Correlation',event=event,
+                                      condition=condition,keyword=keyword_out)
+        else:
+            if all([self._has_source(event,condition,value+'_correlation',
+                                     keyword=keyword_out) for value in values]):
+                self._overwrite_error('Permutation',event=event,condition=condition,
+                                      values=values,keyword=keyword_out)
         f = np.load(fname_in)
         bootstrap_indices = f['bootstrap_indices']
         Nboot,Nave = bootstrap_indices.shape
@@ -3263,7 +3270,7 @@ class MEEGbuddy:
             for value in values:
                 fname2 = self._fname('analyses','bootstrap','npz',
                                      event,condition,value,keyword_in)
-                this_stc = np.load(fname2)['stcs']
+                this_stc = np.load(fname2)['stc']
                 if tfr:
                     this_power = {}
                     if itc:
@@ -3273,13 +3280,13 @@ class MEEGbuddy:
                                              'bootstrap_power_%s' %(band),
                                              'npz',event,condition,value,
                                              keyword_in)
-                        this_power[band] = np.load(fname3)['powers']
+                        this_power[band] = np.load(fname3)['power']
                         if itc:
                             fname4 = self._fname('analyses',
                                                  'bootstrap_itc_%s' %(band),
                                                  'npz',event,condition,value,
                                                  keyword_in)
-                            this_itc[band] = np.load(fname3)['itcs']
+                            this_itc[band] = np.load(fname3)['itc']
                 # Get p-values from permutation distribution
                 for s_ind in tqdm(range(nSRC)):
                     s_data = np.array(stcs[:,s_ind])
@@ -3302,16 +3309,16 @@ class MEEGbuddy:
                                     p = sum(abs(itc_dist)<
                                             abs(this_itc[band][s_ind,t_ind]))/Nboot
                                     itc_result[band].data[s_ind,t_ind] = 1.0/p
-                self._save_source(stc_result,event,condition,'permutation',
+                self._save_source(stc_result,event,condition,value+'_permutation',
                                   keyword=keyword_out)
                 if tfr:
                     for band in bands:
                         self._save_source(power_result[band],event,condition,
-                                          'power_permutation_%s' %(band),
+                                          value+'_power_permutation_%s' %(band),
                                           keyword=keyword_out)
                         if itc:
                             self._save_source(itc_result[band],event,condition,
-                                              'itc_permutation_%s' %(band),
+                                              value+'_itc_permutation_%s' %(band),
                                               keyword=keyword_out)
 
 
@@ -3425,7 +3432,7 @@ class MEEGbuddy:
                 Threshold = baseline_bootstrap(Y,J,bl_tind,Norm,NUM,DEN,Nboot,
                                                alpha,info,inv,lambda2,method,
                                                pick_ori)
-                self._save_noreun_baseline(Y,J,Threshold,epochs[indices].events[:,2],
+                self._save_noreun_baseline(Threshold,epochs[indices].events[:,2],
                                            bl_tmin,bl_tmax,Nboot,alpha,event,
                                            condition,value,keyword_out)
         # PCI by value
@@ -3436,7 +3443,7 @@ class MEEGbuddy:
             else:
                 indices = value_indices[value]
                 print('Running Lempel-Ziv compression for %s' %(value))
-                _,_,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
+                Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
                     self._load_noreun_baseline(event,condition,
                                                'all' if shared_baseline else value,
                                                keyword_out)
@@ -3452,7 +3459,7 @@ class MEEGbuddy:
                 binJrank=binJ[Irank,:]
                 binJ=binJrank[:,tind]
                 ct = computePCI(binJ)
-                self._save_noreun_PCI(ct,binJ,tmin,tmax,npoint_art,
+                self._save_noreun_PCI(ct,binJ,Y,J,tmin,tmax,npoint_art,
                                       event,condition,value,keyword_out)
 
 
@@ -3470,11 +3477,7 @@ class MEEGbuddy:
                               condition=condition,value=value,
                               keyword=keyword)
             f = np.load(fname)
-            try:
-                return (f['Y'],f['J'],f['Threshold'],f['events'],f['bl_tmin'].item(),
-                        f['bl_tmax'].item(),f['Nboot'].item(),f['alpha'].item())
-            except:
-                return (f['Y'],f['J'],f['Threshold'],f['bl_tmin'].item(),
+            return (f['Threshold'],f['events'],f['bl_tmin'].item(),
                         f['bl_tmax'].item(),f['Nboot'].item(),f['alpha'].item())
         else:
             self._no_file_error('Bootstrap Threshold',event=event,
@@ -3482,14 +3485,14 @@ class MEEGbuddy:
                                 keyword=keyword)
 
 
-    def _save_noreun_baseline(self,Y,J,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha,
+    def _save_noreun_baseline(self,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha,
                               event,condition,value,keyword=None):
         self._file_saved('Bootstrap Threshold',event=event,
                          condition=condition,value=value,
                          keyword=keyword)
         fname = self._fname('analyses','Threshold','npz',keyword,
                             event,condition,value)
-        np.savez_compressed(fname,Y=Y,J=J,Threshold=Threshold,bl_tmin=bl_tmin,
+        np.savez_compressed(fname,Threshold=Threshold,bl_tmin=bl_tmin,
                             bl_tmax=bl_tmax,events=events,Nboot=Nboot,
                             alpha=alpha)
 
@@ -3510,35 +3513,36 @@ class MEEGbuddy:
         else:
             self._no_file_error('PCI',event=event,condition=condition,
                                 value=value,keyword=keyword)
-        return f['ct'],f['binJ'],f['tmin'].item(),f['tmax'].item(),f['npoint_art'].item()
+        return (f['ct'],f['binJ'],f['Y'],f['J'],
+                f['tmin'].item(),f['tmax'].item(),f['npoint_art'].item())
 
 
-    def _save_noreun_PCI(self,ct,binJ,tmin,tmax,npoint_art,event,condition,value,
-                         keyword=None):
+    def _save_noreun_PCI(self,ct,binJ,Y,J,tmin,tmax,npoint_art,
+                         event,condition,value,keyword=None):
         self._file_saved('PCI',event=event,condition=condition,
                          value=value,keyword=keyword)
         fname = self._fname('analyses','PCI','npz',keyword,
                             event,condition,value)
-        np.savez_compressed(fname,ct=ct,binJ=binJ,tmin=tmin,tmax=tmax,
+        np.savez_compressed(fname,ct=ct,binJ=binJ,Y=Y,J=J,tmin=tmin,tmax=tmax,
                             npoint_art=npoint_art)
 
 
     def plotNoreunPCI(self,event,condition,values=None,keyword=None,
-                      ssm=True,pci=True,downsampled=True,shared_baseline=False,
-                      fontsize=24,wspace=0.4,linewidth=4,show=True):
+                      ssm=True,pci=True,evoked=True,downsampled=True,
+                      shared_baseline=False,fontsize=24,wspace=0.4,
+                      linewidth=4,cmap='jet',show=True):
         values = self._default_values(condition,values=values)
         if len(values) > 1:
-            fig, axs = plt.subplots(1,len(values))
+            fig, axs = plt.subplots(2,len(values))
         else:
-            fig, ax = plt.subplots()
-            axs = [ax]
+            fig, ax = plt.subplots(2,1)
         fig.set_size_inches(12,8)
         fig.subplots_adjust(wspace=wspace)
         yMAX = 0
         for i,value in enumerate(values):
-            ct,binJ,tmin,tmax,npoint_art = \
+            ct,binJ,Y,J,tmin,tmax,npoint_art = \
                 self._load_noreun_PCI(event,condition,value,keyword)
-            Y,J,Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
+            Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
                     self._load_noreun_baseline(event,condition,
                                                'all' if shared_baseline else value,
                                                keyword)
@@ -3546,7 +3550,7 @@ class MEEGbuddy:
             if ct.max() > yMAX:
                 yMAX = ct.max()
             if ssm:
-                ax = axs[i].twinx() if pci else axs[i]
+                ax = axs[0,i].twinx() if pci else axs[i]
                 ax.zorder = 0
                 nSRC,nTIME = binJ.shape
                 ax.imshow(binJ,extent=[0,nTIME,0,nSRC],
@@ -3554,7 +3558,7 @@ class MEEGbuddy:
                 ax.set_ylim(bottom=-10,top=nSRC+10)
                 ax.set_ylabel('Sources Ranked by Activity',fontsize=fontsize)
             if pci:
-                ax = axs[i]
+                ax = axs[0,i]
                 ax.zorder = 1
                 ax.patch.set_alpha(0)
                 ax.plot(range(ct.shape[0]),ct,'y-',
@@ -3562,6 +3566,13 @@ class MEEGbuddy:
                 ax.plot(range(ct.shape[0]),ct,'b-',
                         linewidth=linewidth/2,alpha=1,zorder=2)
                 ax.set_ylabel('PCI',fontsize=fontsize)
+            if evoked:
+                ax = axs[1,i]
+                cm = plt.get_cmap(cmap)
+                for k,j in enumerate(J):
+                    ax.plot(range(ct.shape[0]),j,color=cm(k))
+                ax.set_ylim(top=max([0,J.max()*1.1]),bottom=min([0,J.min()*1.1]))
+                ax.set_ylabel('Source Estimate Activity')
             title = ('%s' %(value) + ', PCI=%2.2g' %(ct[-1])*pci +
                      ', %i Trials'%(Y.shape[0]))
             ax.set_title(title,fontsize=fontsize)
@@ -3570,7 +3581,7 @@ class MEEGbuddy:
             ax.set_xticks(np.linspace(0,ct.shape[0],5))
             ax.set_xticklabels(np.round(np.linspace(start,tmax,5),2))
 
-        if pci: [ax.set_ylim(top=yMAX*1.05) for ax in axs]
+        if pci: [ax.set_ylim(top=yMAX*1.05) for ax in axs[0]]
         title = ('%s %s' %(event,condition) + ' Significant Sources'*ssm +
                  ' and'*(pci and ssm) + ' PCI'*pci +
                  ' %s' %(keyword) * (keyword is not None))
