@@ -3506,7 +3506,7 @@ class MEEGbuddy:
     def _load_noreun_PCI(self,event,condition,value,keyword=None):
         fname = self._fname('analyses','PCI','npz',keyword,
                             event,condition,value)
-        if os.path.isfile(fname):
+        if op.isfile(fname):
             self._file_loaded('PCI',event=event,condition=condition,
                                 value=value,keyword=keyword)
             f = np.load(fname)
@@ -3528,14 +3528,15 @@ class MEEGbuddy:
 
 
     def plotNoreunPCI(self,event,condition,values=None,keyword=None,
-                      ssm=True,pci=True,evoked=True,downsampled=True,
-                      shared_baseline=False,fontsize=24,wspace=0.4,
-                      linewidth=4,cmap='jet',show=True):
+                      ssm=True,pci=True,evoked=True,evoked_res=0.01,
+                      downsampled=True,shared_baseline=False,
+                      fontsize=24,wspace=0.4,linewidth=4,show=True):
         values = self._default_values(condition,values=values)
         if len(values) > 1:
             fig, axs = plt.subplots(2,len(values))
         else:
-            fig, ax = plt.subplots(2,1)
+            fig, axs = plt.subplots(2,1)
+            axs = axs[:,np.newaxis]
         fig.set_size_inches(12,8)
         fig.subplots_adjust(wspace=wspace)
         yMAX = 0
@@ -3566,13 +3567,6 @@ class MEEGbuddy:
                 ax.plot(range(ct.shape[0]),ct,'b-',
                         linewidth=linewidth/2,alpha=1,zorder=2)
                 ax.set_ylabel('PCI',fontsize=fontsize)
-            if evoked:
-                ax = axs[1,i]
-                cm = plt.get_cmap(cmap)
-                for k,j in enumerate(J):
-                    ax.plot(range(ct.shape[0]),j,color=cm(k))
-                ax.set_ylim(top=max([0,J.max()*1.1]),bottom=min([0,J.min()*1.1]))
-                ax.set_ylabel('Source Estimate Activity')
             title = ('%s' %(value) + ', PCI=%2.2g' %(ct[-1])*pci +
                      ', %i Trials'%(Y.shape[0]))
             ax.set_title(title,fontsize=fontsize)
@@ -3580,6 +3574,18 @@ class MEEGbuddy:
             ax.set_xlim([-10,ct.shape[0]+10])
             ax.set_xticks(np.linspace(0,ct.shape[0],5))
             ax.set_xticklabels(np.round(np.linspace(start,tmax,5),2))
+            if evoked:
+                ax = axs[1,i]
+                ax.plot(J[::int(1/evoked_res)].T)
+                ax.set_ylim(top=max([0,np.quantile(J,0.99)*2]),
+                            bottom=min([0,np.quantile(J,0.01)*2])) #for TMS pulse not to swamp
+                ax.set_ylabel('Source Estimate Activity')
+                ax.set_xlabel('Time (s)',fontsize=fontsize)
+                ax.set_xlim([min([tmin,bl_tmin]),max([tmax,bl_tmax])])
+                ax.set_xticks(np.linspace(0,J.shape[1],5))
+                ax.set_xticklabels(np.round(np.linspace(
+                                   min([tmin,bl_tmin]),max([tmax,bl_tmax]),
+                                            5),2))
 
         if pci: [ax.set_ylim(top=yMAX*1.05) for ax in axs[0]]
         title = ('%s %s' %(event,condition) + ' Significant Sources'*ssm +
