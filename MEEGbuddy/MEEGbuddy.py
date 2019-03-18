@@ -3530,15 +3530,15 @@ class MEEGbuddy:
     def plotNoreunPCI(self,event,condition,values=None,keyword=None,
                       ssm=True,pci=True,evoked=True,evoked_res=0.01,
                       downsampled=True,shared_baseline=False,
-                      fontsize=24,wspace=0.4,linewidth=4,show=True):
+                      fontsize=12,wspace=0.4,linewidth=4,show=True):
         values = self._default_values(condition,values=values)
         if len(values) > 1:
             fig, axs = plt.subplots(2,len(values))
         else:
             fig, axs = plt.subplots(2,1)
             axs = axs[:,np.newaxis]
-        fig.set_size_inches(12,8)
-        fig.subplots_adjust(wspace=wspace)
+        fig.set_size_inches(4*len(values),8)
+        fig.subplots_adjust(wspace=wspace,right=0.8)
         yMAX = 0
         for i,value in enumerate(values):
             ct,binJ,Y,J,tmin,tmax,npoint_art = \
@@ -3579,7 +3579,7 @@ class MEEGbuddy:
                 ax.plot(J[::int(1/evoked_res)].T)
                 ax.set_ylim(top=max([0,np.quantile(J,0.99)*2]),
                             bottom=min([0,np.quantile(J,0.01)*2])) #for TMS pulse not to swamp
-                ax.set_ylabel('Source Estimate Activity')
+                ax.set_ylabel('Source Estimate Activity',fontsize=fontsize)
                 ax.set_xlabel('Time (s)',fontsize=fontsize)
                 ax.set_xlim([min([tmin,bl_tmin]),max([tmax,bl_tmax])])
                 ax.set_xticks(np.linspace(0,J.shape[1],5))

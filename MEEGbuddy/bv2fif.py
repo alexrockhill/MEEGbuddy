@@ -89,7 +89,7 @@ def bv2fif(dataf,corf,ch_order=None,eogs=('VEOG','HEOG'),ecg='ECG',emg='EMG',
         del ch
 
     raw_resampled = RawArray(raw_data,raw_info)
-    raw_resampled.annotations = raw.annotations
+    raw_resampled.set_annotations(raw.annotations)
 
     if dbs:
         old_event_ch = [ch for ch in raw.info['ch_names'] if 'STI' in ch]
