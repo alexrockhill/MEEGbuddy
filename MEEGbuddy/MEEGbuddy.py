@@ -3297,18 +3297,20 @@ class MEEGbuddy:
                     for t_ind in range(nTIMES):
                         dist = s_data[:,t_ind]
                         p = sum(abs(dist)<abs(this_stc[s_ind,t_ind]))/Nboot
-                        stc_result.data[s_ind,t_ind] = 1.0/p
+                        stc_result.data[s_ind,t_ind] = 1.0/p if p > 0 else Nboot
                         if tfr:
                             for band in bands:
                                 power_dist = power_s_data[band][:,t_ind]
                                 p = sum(abs(power_dist)<
                                         abs(this_power[band][s_ind,t_ind]))/Nboot
-                                power_result[band].data[s_ind,t_ind] = 1.0/p
+                                power_result[band].data[s_ind,t_ind] = \
+                                    1.0/p if p > 0 else Nboot
                                 if itc:
                                     itc_dist = itc_s_data[band][:,t_ind]
                                     p = sum(abs(itc_dist)<
                                             abs(this_itc[band][s_ind,t_ind]))/Nboot
-                                    itc_result[band].data[s_ind,t_ind] = 1.0/p
+                                    itc_result[band].data[s_ind,t_ind] = \
+                                        1.0/p if p > 0 else Nboot
                 self._save_source(stc_result,event,condition,value+'_permutation',
                                   keyword=keyword_out)
                 if tfr:
@@ -3442,6 +3444,8 @@ class MEEGbuddy:
                 print('PCI already computed')
             else:
                 indices = value_indices[value]
+                if downsample and not shared_baseline:
+                    indices = downsampleIndices(indices,nTR,condition,value)
                 print('Running Lempel-Ziv compression for %s' %(value))
                 Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
                     self._load_noreun_baseline(event,condition,
@@ -3529,6 +3533,7 @@ class MEEGbuddy:
 
     def plotNoreunPCI(self,event,condition,values=None,keyword=None,
                       ssm=True,pci=True,evoked=True,evoked_res=0.01,
+                      evoked_tmin=None,evoked_tmax=None,
                       downsampled=True,shared_baseline=False,
                       fontsize=12,wspace=0.4,linewidth=4,show=True):
         values = self._default_values(condition,values=values)
@@ -3538,7 +3543,7 @@ class MEEGbuddy:
             fig, axs = plt.subplots(2,1)
             axs = axs[:,np.newaxis]
         fig.set_size_inches(4*len(values),8)
-        fig.subplots_adjust(wspace=wspace,right=0.8)
+        fig.subplots_adjust(wspace=wspace,left=0.2,right=0.8)
         yMAX = 0
         for i,value in enumerate(values):
             ct,binJ,Y,J,tmin,tmax,npoint_art = \
@@ -3581,11 +3586,11 @@ class MEEGbuddy:
                             bottom=min([0,np.quantile(J,0.01)*2])) #for TMS pulse not to swamp
                 ax.set_ylabel('Source Estimate Activity',fontsize=fontsize)
                 ax.set_xlabel('Time (s)',fontsize=fontsize)
-                ax.set_xlim([min([tmin,bl_tmin]),max([tmax,bl_tmax])])
+                evoked_tmin = min([tmin,bl_tmin]) if evoked_tmin is None else evoked_tmin
+                evoked_tmax = max([tmax,bl_tmax]) if evoked_tmax is None else evoked_tmax
+                ax.set_xlim([evoked_tmin,evoked_tmax])
                 ax.set_xticks(np.linspace(0,J.shape[1],5))
-                ax.set_xticklabels(np.round(np.linspace(
-                                   min([tmin,bl_tmin]),max([tmax,bl_tmax]),
-                                            5),2))
+                ax.set_xticklabels(np.round(np.linspace(evoked_tmin,evoked_tmax,5),2))
 
         if pci: [ax.set_ylim(top=yMAX*1.05) for ax in axs[0]]
         title = ('%s %s' %(event,condition) + ' Significant Sources'*ssm +
@@ -3651,12 +3656,12 @@ class MEEGbuddy:
     def waveletConnectivity(self,event,condition,values=None,
                             keyword_in=None,keyword_out=None,downsample=True,
                             seed=13,threshold=0.05,min_dist=0.05,
-                            tmin=None,tmax=None,fmin=4,fmax=150,
-                            nmin=2,nmax=75,steps=32,gif_combine=True,
-                            method='pli',tube_radius=0.001,time_dilation=10,
+                            tmin=None,tmax=None,vis_tmin=None,vis_tmax=None,
+                            fmin=4,fmax=150,nmin=2,nmax=75,steps=32,gif_combine=True,
+                            method='pli',tube_radius=0.001,time_scalar=10,
                             n_jobs=5,stc=True,fps=20,
                             bands={'theta':(4,8),'alpha':(8,15),
-                                   'beta':(15,30),'low-gamma':(30,80),
+                                   'beta':(15,35),'low-gamma':(35,80),
                                    'high-gamma':(80,150)},
                             views=['llat','cau','dor','ven','fro','lfpar',
                                    'rlat','rcpar'],
@@ -3666,7 +3671,8 @@ class MEEGbuddy:
         keyword_out = keyword_in if keyword_out is None else keyword_out
         frequencies = np.logspace(np.log10(fmin),np.log10(fmax),steps)
         n_cycles = np.logspace(np.log10(nmin),np.log10(nmax),steps)
-        tmin,tmax = self._default_t(event,tmin,tmax)
+        tmin,tmax = self._default_t(event,tmin,tmax,buffered=True)
+        vis_tmin,vis_tmax = self._default_t(event,vis_tmin,vis_tmax) #no buffer
         epochs = self._load_epochs(event,keyword=keyword_in)
         epochs = epochs.crop(tmin=tmin,tmax=tmax)
         values = self._default_values(condition,values=values)
@@ -3682,9 +3688,14 @@ class MEEGbuddy:
             print(dt)
             epo = self._pick_types(epochs,dt)
             sens_loc = np.array([ch['loc'][:3] for ch in epo.info['chs']])
-            time_factor = int(len(epo.times)/(time_dilation*(tmax-tmin)*fps))
-            if time_factor < 1:
-                raise ValueError('Too many frames per second and/or time dilation, ' + 
+            #time_factor = int(len(epo.times)/(time_dilation*(tmax-tmin)*fps))
+            duration = (vis_tmax-vis_tmin)*sfreq/(fps*time_scalar)
+            vis_tmin_ind = int((vis_tmin-tmin)*sfreq)
+            if time_scalar < 1:
+                raise ValueError('The minimum time scale is 1, which would ' +
+                                 'display all connectivity points')
+            elif time_scalar > len(epo.times):
+                raise ValueError('Too many frames per second and/or time scaling, ' + 
                                  'not enough connectivity time points')
             for band_name,(fmin,fmax) in bands.items():
                 print(band_name)
@@ -3752,7 +3763,8 @@ class MEEGbuddy:
                                                colormap=cmap)
                         def make_frame(t):
                             mlab.clf()
-                            t_ind = int(t*fps*time_factor)
+                            t_ind = vis_tmin_ind + int(t*fps)*time_scalar
+                            print(t_ind)
                             if view == 'cbar' or not gif_combine:
                                 mlab.scalarbar(scale_points,title=('Phase Lag Index (PLI), ' +
                                                'time=%.2f' %(epo.times[t_ind])),
@@ -3777,7 +3789,7 @@ class MEEGbuddy:
                                 mlab.move(up=-0.025)
                             return mlab.screenshot(antialiased=True)
 
-                        anim = mpy.VideoClip(make_frame,duration=time_dilation*(tmax-tmin))
+                        anim = mpy.VideoClip(make_frame,duration=duration)
                         fname = self._fname('plots','connectivity','gif',event,condition,
                                             value,band_name,dt,keyword_out,view)
                         gif_names.append(fname)
