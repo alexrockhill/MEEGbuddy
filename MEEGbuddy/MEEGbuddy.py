@@ -605,28 +605,28 @@ class MEEGbuddy:
                             lambda2=lambda2,method=method,pick_ori=pick_ori)
 
 
-    def _has_source(self,event,condition,value,keyword=None,fs_av=False):
+    def _has_source(self,event,condition,value,keyword=None):
         fname = self._fname('source_estimates','source-lh','stc',keyword,
-                            event,condition,value,'fs_av'*fs_av)
+                            event,condition,value)
         return op.isfile(fname)
 
 
-    def _load_source(self,event,condition,value,keyword=None,fs_av=False):
+    def _load_source(self,event,condition,value,keyword=None):
         fname = self._fname('source_estimates','source-lh','stc',keyword,
-                            event,condition,value,'fs_av'*fs_av)
-        if self._has_source(event,condition,value,keyword=keyword,fs_av=fs_av):
-            self._file_loaded('Source',fs_av,event=event,condition=condition,
+                            event,condition,value)
+        if self._has_source(event,condition,value,keyword=keyword):
+            self._file_loaded('Source Estimate',event=event,condition=condition,
                               value=value,keyword=keyword)
             return read_source_estimate(fname)
         else:
             print('Source not found for %s %s %s' %(event,condition,value))
 
 
-    def _save_source(self,stc,event,condition,value,keyword=None,fs_av=False):
-        self._file_saved('Source',fs_av,event=event,condition=condition,
+    def _save_source(self,stc,event,condition,value,keyword=None):
+        self._file_saved('Source Estimate',event=event,condition=condition,
                           value=value,keyword=keyword)
         stc.save(self._fname('source_estimates','source',None,keyword,
-                             event,condition,value,'fs_av' if fs_av else None),
+                             event,condition,value),
                  ftype='stc')
 
 
@@ -1323,7 +1323,7 @@ class MEEGbuddy:
                          tfr_keyword=None,power_type='npl',contrast=False,
                          tmin=None,tmax=None,tfr=True,
                          bands={'theta':(4,8),'alpha':(8,15),
-                                'beta':(15,30),'low-gamma':(30,80),
+                                'beta':(15,35),'low-gamma':(35,80),
                                 'high-gamma':(80,150)},
                          vmin=None,vmax=None,contours=6,time_points=5,show=True):
         for band in bands:
@@ -1610,7 +1610,7 @@ class MEEGbuddy:
                 tfr_keyword=None,power_type='npl',contrast=False,
                 butterfly=False,aux=False,tmin=None,tmax=None,
                 vmin=None,vmax=None,bands={'theta':(4,8),
-                'alpha':(8,15),'beta':(15,30),'low-gamma':(30,80),
+                'alpha':(8,15),'beta':(15,35),'low-gamma':(35,80),
                 'high-gamma':(80,150)}):
         # computes the time frequency representation of a particular event and
         # condition or all events and conditions
@@ -2235,7 +2235,7 @@ class MEEGbuddy:
                   keyword_out=None,tfr_keyword=None,power_type='npl',
                   tmin=None,tmax=None,threshold=6.0,aux=False,
                   bands={'theta':(4,8),'alpha':(8,15),
-                         'beta':(15,30),'low-gamma':(30,80),
+                         'beta':(15,35),'low-gamma':(35,80),
                          'high-gamma':(80,150)},
                   contrast=False):
         for band in bands:
@@ -2385,7 +2385,7 @@ class MEEGbuddy:
                    keyword_out=None,aux=False,vmin=None,vmax=None,
                    tfr_keyword=None,power_type='npl',
                    bands={'theta':(4,8),'alpha':(8,15),
-                         'beta':(15,30),'low-gamma':(30,80),
+                         'beta':(15,35),'low-gamma':(35,80),
                          'high-gamma':(80,150)},
                    cpt_p=0.01,show=True):
         tfr_keyword = keyword if tfr_keyword is None else tfr_keyword
@@ -2674,13 +2674,17 @@ class MEEGbuddy:
         return inv
 
 
-    def fsaverageMorph(self,event,condition,values=None,keyword=None):
+    def fsaverageMorph(self,event,condition,values=None,keyword_in=None,
+                       keyword_out=None,overwrite=False):
+        keyword_out = keyword_in if keyword_out is None else keyword_out
         values = self._default_values(condition,values=values)
         for value in values:
-            stc = self._load_source(event,condition,value,keyword=keyword)
+            stc = self._load_source(event,condition,value,keyword=keyword_in)
             stc_fs = stc.morph('fsaverage')
-            self._save_source(stc_fs,event,condition,value,fs_av=True,
-                              keyword=keyword)
+            if overwrite or not self._has_source(event,condition,value,
+                                                 keyword=keyword_out):
+                self._save_source(stc_fs,event,condition,value,
+                                  keyword=keyword_out)
 
 
     def sourceContrast(self,event,condition,values=None,keyword=None):
@@ -2696,8 +2700,8 @@ class MEEGbuddy:
                                   keyword=keyword)
 
 
-    def plotSourceSpace(self,event,condition,values=None,tmin=None,tmax=None,
-                        fs_av=False,keyword=None,downsample=False,
+    def plotSourceSpace(self,event,condition,values=None,
+                        tmin=None,tmax=None,keyword=None,downsample=False,
                         seed=11,hemi='both',size=(800,800),time_dilation=25,
                         fps=20,clim='auto',use_saved_stc=False, gif_combine=True,
                         views=['lat','med','cau','dor','ven','fro','par'],
@@ -2708,23 +2712,23 @@ class MEEGbuddy:
             otherwise the image write out will break! '''
         values = self._default_values(condition,values=values)
         tmin,tmax = self._default_t(event,tmin,tmax)
-        epochs = self._load_epochs(event,keyword=keyword)
-        epochs = epochs.crop(tmin=tmin,tmax=tmax)
-        if self.eeg:
-            epochs = epochs.set_eeg_reference(ref_channels='average',
-                                              projection=True,verbose=False)
-        value_indices = self._get_indices(epochs,condition,values)
-        nTR = min([len(value_indices[value]) for value in value_indices])
-        if downsample:
-            np.random.seed(seed)
+        if not use_saved_stc:
+            epochs = self._load_epochs(event,keyword=keyword)
+            epochs = epochs.crop(tmin=tmin,tmax=tmax)
+            if self.eeg:
+                epochs = epochs.set_eeg_reference(ref_channels='average',
+                                                  projection=True,verbose=False)
+            value_indices = self._get_indices(epochs,condition,values)
+            nTR = min([len(value_indices[value]) for value in value_indices])
+            if downsample:
+                np.random.seed(seed)
         for value in values:
             if use_saved_stc:
-                if not os.path.isfile(self._fname('sources','source-lh','stc',
-                                                  event,condition,value,
-                                                  'fs_av'*fs_av)):
-                    raise ValueError('The data must be converted to' +
-                                     ' source space first.')
-                stc = self._load_source(event,condition,value,fs_av,
+                if not self._has_source(event,condition,value,keyword=keyword):
+                    self._no_file_error('Source Estimate',event=event,
+                                        condition=condition,value=value,
+                                        keyword=keyword)
+                stc = self._load_source(event,condition,value,
                                         keyword=keyword)
                 stc.crop(tmin=tmin,tmax=tmax)
             else:
@@ -2935,7 +2939,7 @@ class MEEGbuddy:
                         snr=1.0,method='dSPM',pick_ori='normal',tfr=True,
                         itc=False,fmin=4,fmax=150,nmin=2,nmax=75,steps=32,
                         bands={'theta':(4,8),'alpha':(8,15),
-                               'beta':(15,30),'low-gamma':(30,80),
+                               'beta':(15,35),'low-gamma':(35,80),
                                'high-gamma':(80,150)},
                         Nboot=1000,Nave=50,seed=13,n_jobs=10,
                         use_fft=True,mode='same',batch=10,overwrite=False):
@@ -3328,7 +3332,7 @@ class MEEGbuddy:
     def noreunPhi(self,event,condition,values=None,keyword_in=None,
                   keyword_out=None,tmin=None,tmax=None,npoint_art=0,
                   Nboot=480,alpha=0.01,downsample=True,seed=11,
-                  shared_baseline=False,fs_av=False,bl_tmin=-0.5,bl_tmax=-0.1,
+                  shared_baseline=False,bl_tmin=-0.5,bl_tmax=-0.1,
                   recalculate_baseline=False,recalculate_PCI=False):
         ''' note: has to have baseline-event continuity for source space
             transformation: cannot use baseline as would be defined for
