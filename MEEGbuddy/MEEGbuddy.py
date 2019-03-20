@@ -775,8 +775,7 @@ class MEEGbuddy:
         keyword_out = keyword_in if keyword_out is None else keyword_out
         data_types = self._get_data_types()
 
-        if (all([self._has_ICA(data_type=dt,keyword=keyword_out,event=event)
-                for dt in data_types]) and not overwrite_ica):
+        if self._has_ICA(event=event,keyword=keyword_out) and not overwrite_ica:
             raise ValueError('Use \'overwrite_ica=True\' to overwrite')
         if event is None:
             if self._has_raw(keyword=keyword_out) and not overwrite:
