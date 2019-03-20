@@ -371,9 +371,10 @@ class MEEGbuddy:
                  verbose=False,overwrite=True)
 
 
-    def _has_ICA(self,event=None,keyword=None,data_type=None):
-        return op.isfile(self._fname('preprocessing','ica','fif',
+    def _has_ICA(self,event=None,keyword=None):
+        return all([op.isfile(self._fname('preprocessing','ica','fif',
                                      data_type,keyword,event))
+                    for data_type in self._get_data_types()])
 
     def _load_ICA(self,event=None,keyword=None,data_type=None):
         fname = self._fname('preprocessing','ica','fif',
@@ -3448,7 +3449,7 @@ class MEEGbuddy:
                 print('PCI already computed')
             else:
                 indices = value_indices[value]
-                if downsample and not shared_baseline:
+                if downsample:
                     indices = downsampleIndices(indices,nTR,condition,value)
                 print('Running Lempel-Ziv compression for %s' %(value))
                 Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
@@ -3861,7 +3862,8 @@ def loadMEEGbuddies(subjects_dir,meg=None,eeg=None,task=None,shuffled=False,
                     seed=11):
     mbs = os.listdir(op.join(subjects_dir,'meta_data'))
     for mb in mbs.copy():
-        if ((meg is not None and (meg and not 'meg' in mb or not meg and 'meg' in mb)) or
+        if (op.splitext(mb)[1] != '.json' or
+            (meg is not None and (meg and not 'meg' in mb or not meg and 'meg' in mb)) or
             (eeg is not None and (eeg and not 'eeg' in mb or not eeg and 'eeg' in mb)) or
             (task is not None and not task in mb)):
             mbs.remove(mb)
