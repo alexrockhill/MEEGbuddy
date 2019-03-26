@@ -927,7 +927,6 @@ class MEEGbuddy:
                 eogs=None,ecgs=None,tmin=None,tmax=None,
                 ylim=dict(eeg=[-40,40],grad=[-400,400],mag=[-1000,1000]),
                 plot_properties=False,show=True):
-        # To do: before and after plots for epochs are both before, why?
         keyword_out = keyword_in if keyword_out is None else keyword_out
         if event is None:
             inst = self._load_raw(keyword=keyword_in)
@@ -1275,6 +1274,10 @@ class MEEGbuddy:
                 nTR = min([len(value_indices[value]) for value in value_indices])
         fig,axs = plt.subplots((2*self.meg+self.eeg),len(values),
                                figsize=(5*len(values),5*(2*self.meg+self.eeg)))
+        if self.eeg and not self.meg:
+            if not type(axs) is np.ndarray:
+                axs = np.array([axs])
+            axs = axs[np.newaxis,:]
         fig.suptitle('%s %s %s' %(self.subject,event,condition))
         if not isinstance(axs,np.ndarray):
             axs = np.array([axs])
@@ -1294,24 +1297,24 @@ class MEEGbuddy:
             if detrend:
                 evoked = evoked.detrend(order=detrend)
             if self.meg:
-                ax = axs[0,i] if len(values) > 1 else axs[0]
+                ax = axs[0,i]
                 if i == 0:
                     ax.set_ylabel('mag')
                 evoked.copy().pick_types(meg='mag').plot_topo(axes=ax,
                                                         show=False,ylim=ylim)
-                ax2 = axs[1,i] if len(values) > 1 else axs[1]
+                ax2 = axs[1,i]
                 if i == 0:
                     ax2.set_ylabel('grad')
                 evoked.copy().pick_types(meg='grad').plot_topo(axes=ax2,
                                                         show=False,ylim=ylim)
             if self.eeg:
-                ax = axs[0+2*self.meg,i] if len(values) > 1 else axs[0+2*self.meg]
+                ax = axs[2*self.meg,i]
                 if i == 0:
                     ax.set_ylabel('eeg')
                 evoked.copy().pick_types(eeg=True).plot_topo(axes=ax,
                                                              show=False,
                                                              ylim=ylim)
-            ax = axs[0,i] if len(values) > 1 else axs[0]
+            ax = axs[0,i]
             ax.set_title(value)
         fname = self._fname('plots','evoked','jpg',keyword,event,condition,
                             *value_indices.keys())
@@ -1468,6 +1471,8 @@ class MEEGbuddy:
         y_dim = len(values)
         fig,axs = plt.subplots(x_dim,y_dim,figsize=(5*y_dim,5*x_dim))
         fig.subplots_adjust(hspace=0.3,wspace=0.3)
+        if not image and self.eeg and not self.meg:
+            axs = axs[np.newaxis,:]
         if not isinstance(axs,np.ndarray):
             axs = np.array([axs])
         for i,value in enumerate(values):
@@ -2578,7 +2583,8 @@ class MEEGbuddy:
 
     def epochs2source(self,event,condition,values=None,snr=1.0,
                       keyword_in=None,keyword_out=None,method='dSPM',
-                      pick_ori='normal',shared_baseline=False,overwrite=False):
+                      pick_ori='normal',shared_baseline=False,
+                      save_baseline_stc=False,overwrite=False):
         if not all([self.fs_subjects_dir,self.bemf,self.srcf,self.transf]):
             raise ValueError('Source estimation parameters not defined, ' +
                              'either add to meta data or redefine MEEGbuddy')
@@ -2604,11 +2610,12 @@ class MEEGbuddy:
                                      pick_ori)
         self._save_inverse(inv,lambda2,method,pick_ori,
                            event,condition,'all',keyword_out)
-        print('Applying inverse on baseline for all...')
-        bl_evoked = bl_epochs.average()
-        bl_stc = apply_inverse(bl_evoked,inv,lambda2=lambda2,method=method,
-                               pick_ori=pick_ori)
-        self._save_source(bl_stc,'Baseline',condition,'all',keyword_out)
+        if save_baseline_stc:
+            print('Applying inverse on baseline for all...')
+            bl_evoked = bl_epochs.average()
+            bl_stc = apply_inverse(bl_evoked,inv,lambda2=lambda2,method=method,
+                                   pick_ori=pick_ori)
+            self._save_source(bl_stc,'Baseline',condition,'all',keyword_out)
 
         if not shared_baseline:
             bl_value_indices = self._get_indices(bl_epochs,condition,values)
@@ -2616,12 +2623,13 @@ class MEEGbuddy:
             if not shared_baseline:
                 if not value in bl_value_indices: #if the baseline was corrupted,
                     continue                      #don't use the trial
-                bl_indices = bl_value_indices[value]
-                print('Making inverse for %s...' %(value))
-                inv = self._generate_inverse(epochs,fwd,bl_epochs[bl_indices],
-                                             lambda2,method,pick_ori)
-                self._save_inverse(inv,lambda2,method,pick_ori,
-                                   event,condition,value,keyword_out)
+            bl_indices = bl_value_indices[value]
+            print('Making inverse for %s...' %(value))
+            inv = self._generate_inverse(epochs,fwd,bl_epochs[bl_indices],
+                                         lambda2,method,pick_ori)
+            self._save_inverse(inv,lambda2,method,pick_ori,
+                               event,condition,value,keyword_out)
+            if save_baseline_stc:
                 print('Applying inverse on baseline for %s...' %(value))
                 bl_evoked = bl_epochs[bl_indices].average()
                 bl_stc = apply_inverse(bl_evoked,inv,lambda2=lambda2,
@@ -3349,11 +3357,12 @@ class MEEGbuddy:
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=True,verbose=False)
+        epochs = self._pick_types(epochs,'eeg')
         info = epochs.info
         values = self._default_values(condition,values=values)
         value_indices = self._get_indices(epochs,condition,values)
         bl_tind = np.intersect1d(np.where(bl_tmin<=epochs.times),
-                                 np.where(epochs.times<=bl_tmax))
+                             np.where(epochs.times<=bl_tmax))
         nTR = min([len(value_indices[value]) for value in value_indices])
 
         def preprocess(epochs,indices,bl_tind,event,condition,value,keyword_in):
@@ -3450,7 +3459,6 @@ class MEEGbuddy:
                 indices = value_indices[value]
                 if downsample:
                     indices = downsampleIndices(indices,nTR,condition,value)
-                print('Running Lempel-Ziv compression for %s' %(value))
                 Threshold,events,bl_tmin,bl_tmax,Nboot,alpha = \
                     self._load_noreun_baseline(event,condition,
                                                'all' if shared_baseline else value,
@@ -3466,6 +3474,7 @@ class MEEGbuddy:
                 binJrank=np.copy(binJ)
                 binJrank=binJ[Irank,:]
                 binJ=binJrank[:,tind]
+                print('Running Lempel-Ziv compression for %s' %(value))
                 ct = computePCI(binJ)
                 self._save_noreun_PCI(ct,binJ,Y,J,tmin,tmax,npoint_art,
                                       event,condition,value,keyword_out)
@@ -3536,7 +3545,7 @@ class MEEGbuddy:
 
 
     def plotNoreunPCI(self,event,condition,values=None,keyword=None,
-                      ssm=True,pci=True,evoked=True,evoked_res=0.01,
+                      ssm=True,pci=True,evoked='Sensor',evoked_res=0.01,
                       evoked_tmin=None,evoked_tmax=None,
                       downsampled=True,shared_baseline=False,
                       fontsize=12,wspace=0.4,linewidth=4,show=True):
@@ -3585,10 +3594,16 @@ class MEEGbuddy:
             ax.set_xticklabels(np.round(np.linspace(start,tmax,5),2))
             if evoked:
                 ax = axs[1,i]
-                ax.plot(J[::int(1/evoked_res)].T)
-                ax.set_ylim(top=max([0,np.quantile(J,0.99)*2]),
+                if evoked.title() == 'Source':
+                    ax.plot(J[::int(1/evoked_res)].T)
+                    ax.set_ylim(top=max([0,np.quantile(J,0.99)*2]),
                             bottom=min([0,np.quantile(J,0.01)*2])) #for TMS pulse not to swamp
-                ax.set_ylabel('Source Estimate Activity',fontsize=fontsize)
+                    ax.set_ylabel('Source Estimate Activity',fontsize=fontsize)
+                elif evoked.title() == 'Sensor':
+                    ax.plot(Y.mean(axis=0).T)
+                    ax.set_ylim(top=max([0,Y.mean(axis=0).max()*1.1]),
+                            bottom=min([0,Y.mean(axis=0).min()*1.1])) #for TMS pulse not to swamp
+                    ax.set_ylabel(r'$\mu$V',fontsize=fontsize)
                 ax.set_xlabel('Time (s)',fontsize=fontsize)
                 evoked_tmin = min([tmin,bl_tmin]) if evoked_tmin is None else evoked_tmin
                 evoked_tmax = max([tmax,bl_tmax]) if evoked_tmax is None else evoked_tmax
