@@ -28,15 +28,14 @@ def get_events(raw):
     minx = int(raw.info['sfreq']*10)
     maxx = int(raw.info['sfreq']*40)
     ax.plot(np.arange(minx,maxx)/raw.info['sfreq'],ch[minx:maxx])
-    fig.show()
+    plt.show()
 
     min_event_dist = 1.5 #float(raw_input('Minimum Event Distance?    '))
     max_event_dist = 4 #float(raw_input('Maximum Event Distance?    '))
 
     done = False
     while not done:
-        threshold = float(raw_input('Threshold?    '))
-
+        threshold = float(input('Threshold?    '))
         step = int(raw.info['sfreq']*min_event_dist)
         # find a bunch of events, not all of which will be right
         print('Finding events')
@@ -54,7 +53,7 @@ def get_events(raw):
         while not ok and i < len(events):
             fig,ax = plt.subplots()
             ax.plot(ch[int(events[indices[i]]-raw.info['sfreq']):int(events[indices[i]]+raw.info['sfreq'])])
-            fig.show()
+            plt.show()
             i += 1
             ok = input('Enter to keep testing, type anything to stop')
         done = input('Enter to reset threshold, type anything to finish')
