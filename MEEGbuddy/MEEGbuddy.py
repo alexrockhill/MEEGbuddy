@@ -164,13 +164,6 @@ class MEEGbuddy:
             for process in processes:
                 meta_data['Process Directories'][process] = \
                     op.join(subjects_dir,process)
-                if (not op.isdir(op.join(subjects_dir,process,subject))
-                    and process != 'meta_data' and process != 'plots'):
-                    os.makedirs(op.join(subjects_dir,process,subject))
-                if (session is not None and process != 'meta_data' and
-                    not op.isdir(op.join(subjects_dir,process,subject,session))):
-                        os.makedirs(op.join(subjects_dir,process,subject,session))
-
 
             if behavior is None:
                 behavior = (op.join(meta_data['Process Directories']['behavior'],
@@ -306,7 +299,7 @@ class MEEGbuddy:
                      self.session is None else
                      op.join(self.process_dirs[process_dir],self.subject,
                              self.session))
-        if not os.path.isdir(dirname):
+        if not op.isdir(dirname):
             os.makedirs(dirname)
         fname = self.subject
         if self.session:
@@ -879,11 +872,11 @@ class MEEGbuddy:
         for ch in eogs:
             try:
                 epochs = create_eog_epochs(raw,ch_name=ch,h_freq=8)
+                indices, scores = ica.find_bads_eog(epochs,ch_name=ch)
+                all_scores[ch] = scores
             except:
                 print('EOG %s dead' %(ch))
                 continue
-            indices, scores = ica.find_bads_eog(epochs,ch_name=ch)
-            all_scores[ch] = scores
             if l_freq is not None or h_freq is not None:
                 epochs = epochs.filter(l_freq=l_freq,h_freq=h_freq)
             evoked = epochs.average()
@@ -896,11 +889,11 @@ class MEEGbuddy:
         for ecg in ecgs:
             try:
                 epochs = create_ecg_epochs(raw,ch_name=ecg)
+                indices, scores = ica.find_bads_ecg(epochs)
+                all_scores[ecg] = scores
             except:
                 print('ECG %s dead' %(ecg))
                 continue
-            indices, scores = ica.find_bads_ecg(epochs)
-            all_scores[ecg] = scores
             if l_freq is not None or h_freq is not None:
                 epochs = epochs.filter(l_freq=l_freq,h_freq=h_freq)
             evoked = epochs.average()
@@ -3555,7 +3548,7 @@ class MEEGbuddy:
         else:
             fig, axs = plt.subplots(2,1)
             axs = axs[:,np.newaxis]
-        fig.set_size_inches(4*len(values),8)
+        fig.set_size_inches(8*len(values),8)
         fig.subplots_adjust(wspace=wspace,left=0.2,right=0.8)
         yMAX = 0
         for i,value in enumerate(values):
@@ -3600,9 +3593,9 @@ class MEEGbuddy:
                             bottom=min([0,np.quantile(J,0.01)*2])) #for TMS pulse not to swamp
                     ax.set_ylabel('Source Estimate Activity',fontsize=fontsize)
                 elif evoked.title() == 'Sensor':
-                    ax.plot(Y.mean(axis=0).T)
-                    ax.set_ylim(top=max([0,Y.mean(axis=0).max()*1.1]),
-                            bottom=min([0,Y.mean(axis=0).min()*1.1])) #for TMS pulse not to swamp
+                    ax.plot(1e6*Y.mean(axis=0).T)
+                    ax.set_ylim(top=max([0,1e6*Y.mean(axis=0).max()*1.1]),
+                            bottom=min([0,1e6*Y.mean(axis=0).min()*1.1])) #for TMS pulse not to swamp
                     ax.set_ylabel(r'$\mu$V',fontsize=fontsize)
                 ax.set_xlabel('Time (s)',fontsize=fontsize)
                 evoked_tmin = min([tmin,bl_tmin]) if evoked_tmin is None else evoked_tmin

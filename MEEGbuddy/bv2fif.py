@@ -20,22 +20,27 @@ def get_events(raw):
     import glob,re
     from scipy import interpolate
     from scipy import signal
-
-    ch = raw._data[raw.info['ch_names'].index('FC5')].copy()
-    b,a = signal.butter(3,1./(raw.info['sfreq']/2),'highpass')
+    #
+    ch = raw._data[raw.info['ch_names'].index(raw.ch_names[3])].copy()
+    b,a = signal.butter(3,0.5,'highpass')
     ch = signal.filtfilt(b,a,ch)
-    fig,ax = plt.subplots()
-    minx = int(raw.info['sfreq']*10)
-    maxx = int(raw.info['sfreq']*40)
-    ax.plot(np.arange(minx,maxx)/raw.info['sfreq'],ch[minx:maxx])
-    plt.show()
-
-    min_event_dist = 1.5 #float(raw_input('Minimum Event Distance?    '))
-    max_event_dist = 4 #float(raw_input('Maximum Event Distance?    '))
-
+    #
+    min_event_dist = 1.5 #float(input('Minimum Event Distance?    '))
+    max_event_dist = 4 #float(input('Maximum Event Distance?    '))
+    #
     done = False
     while not done:
-        threshold = float(input('Threshold?    '))
+        fig,ax = plt.subplots()
+        minx = int(raw.info['sfreq']*10)
+        maxx = int(raw.info['sfreq']*40)
+        ax.plot(np.arange(minx,maxx)/raw.info['sfreq'],ch[minx:maxx])
+        plt.show()
+        threshold = None
+        while not threshold:
+            try:
+                threshold = float(input('Threshold?    '))
+            except:
+                threshold = None
         step = int(raw.info['sfreq']*min_event_dist)
         # find a bunch of events, not all of which will be right
         print('Finding events')
@@ -43,7 +48,7 @@ def get_events(raw):
         for i in tqdm(range(step, len(ch)-step, 2*step)):
             max_index = np.argmax(abs(ch[i-step:i+step]))
             dist = np.sort(abs(ch[i-step:i+step]))
-            compare_value = dist[-2]
+            compare_value = dist[-10]
             if ch[i-step+max_index] - compare_value > threshold:
                 events.append(i - step + max_index)
         ok = False
@@ -55,9 +60,9 @@ def get_events(raw):
             ax.plot(ch[int(events[indices[i]]-raw.info['sfreq']):int(events[indices[i]]+raw.info['sfreq'])])
             plt.show()
             i += 1
-            ok = input('Enter to keep testing, type anything to stop')
-        done = input('Enter to reset threshold, type anything to finish')
-
+            ok = input('Enter to keep testing, type anything to stop\n')
+        done = input('%i events found. Enter to reset threshold, type anything to finish\n' %(len(events)))
+    #
     # make a channel
     info = create_info(['DBS'], raw.info['sfreq'],['stim'],verbose=False)
     arr = np.zeros((1, len(raw.times)))
@@ -67,19 +72,20 @@ def get_events(raw):
     return event_ch
 
 def bv2fif(dataf,corf,ch_order=None,eogs=('VEOG','HEOG'),ecg='ECG',emg='EMG',
-           preload='default',ref_ch='Fp1',dbs=False,new_sfreq=1000.0):
+           preload='default',ref_ch='Fp1',dbs=False,new_sfreq=1000.0,
+           use_find_events='dbs'):
     montage = read_dig_montage(bvct=corf)
     if preload == 'default':
         preload = os.path.dirname(dataf)+'/workfile'
 
     raw = read_raw_brainvision(dataf,preload=preload)
 
-    if dbs:
+    if dbs and use_find_events == 'dbs' or use_find_events:
         event_ch = get_events(raw)
 
     # save downsampled raw for multitaper spectrogram
     raw_data = np.zeros((raw._data.shape[0],
-                         int(raw._data.shape[1]/raw.info['sfreq']*new_sfreq)))
+                         int(np.ceil(raw._data.shape[1]/raw.info['sfreq']*new_sfreq))))
     raw_info = raw.info.copy()
     raw_info['sfreq'] = new_sfreq
     for i in tqdm(range(len(raw._data))):
@@ -90,19 +96,25 @@ def bv2fif(dataf,corf,ch_order=None,eogs=('VEOG','HEOG'),ecg='ECG',emg='EMG',
     raw_resampled = RawArray(raw_data,raw_info)
     raw_resampled.set_annotations(raw.annotations)
 
-    if dbs:
+    if dbs and use_find_events == 'dbs' or use_find_events:
         old_event_ch = [ch for ch in raw.info['ch_names'] if 'STI' in ch]
         if old_event_ch:
             raw_resampled.drop_channels([old_event_ch[0]])
-        event_ch._data = event_ch._data[:,::int(raw.info['sfreq']/new_sfreq)]
-        event_ch.info['sfreq'] = new_sfreq
-        event_ch.__len__ = len(event_ch._data[0])
-        event_ch.info['lowpass'] = raw_resampled.info['lowpass']
-        raw_resampled.add_channels([event_ch])
+        event_ch_resampled = RawArray(event_ch._data[:,::int(raw.info['sfreq']/new_sfreq)],
+                                      create_info(['DBS'], new_sfreq,['stim'],verbose=False))
+        event_ch_resampled.__len__ = len(event_ch._data[0])
+        event_ch_resampled.info['lowpass'] = raw_resampled.info['lowpass']
+        raw_resampled.add_channels([event_ch_resampled])
+        if use_find_events and use_find_events != 'dbs':
+            raw_resampled.rename_channels({'DBS':'TMS'})
 
-    prepInst(raw_resampled,dataf,'raw',montage,ref_ch,eogs,ecg,emg)
+    prepInst(raw_resampled,dataf,'raw',montage,ref_ch,eogs,ecg,emg,
+             'DBS' if dbs else None)
 
-    events,event_ids = events_from_annotations(raw)
+    if dbs and use_find_events == 'dbs' or use_find_events:
+        events = find_events(event_ch)
+    else:
+        events,event_ids = events_from_annotations(raw_resampled)
     if len(np.unique(events[:,2])) > 1:
         events = events[np.where(events[:,2] == events[1,2])[0]] #skip new segment
     epochs = Epochs(raw,events,tmin=-2,tmax=2,proj=False,
@@ -122,10 +134,11 @@ def bv2fif(dataf,corf,ch_order=None,eogs=('VEOG','HEOG'),ecg='ECG',emg='EMG',
     epo_resampled.events[:,2] = np.arange(len(events))
     epo_resampled.event_id = {str(i):i for i in range(len(events))}
 
-    prepInst(epo_resampled,dataf,'epo',montage,ref_ch,eogs,ecg,emg)
+    prepInst(epo_resampled,dataf,'epo',montage,ref_ch,eogs,ecg,emg,
+             'DBS' if dbs else None)
 
 
-def prepInst(inst,dataf,suffix,montage,ref_ch,eogs,ecg,emg):
+def prepInst(inst,dataf,suffix,montage,ref_ch,eogs,ecg,emg,stim):
     info = create_info([ref_ch], inst.info['sfreq'], ['eeg'],verbose=False)
     info['lowpass'] = inst.info['lowpass']
     if suffix == 'raw':
@@ -136,7 +149,7 @@ def prepInst(inst,dataf,suffix,montage,ref_ch,eogs,ecg,emg):
     #
     inst = inst.set_eeg_reference(['TP9', 'TP10'])
     if suffix == 'epo':
-        while len(inst.picks) != len(inst): # weird picks bug
+        while len(inst.picks) != len(inst.ch_names): # weird picks bug
             inst.picks = np.append(inst.picks,len(inst.picks))
     inst = inst.drop_channels(['TP9', 'TP10'])
     #
@@ -156,19 +169,37 @@ def prepInst(inst,dataf,suffix,montage,ref_ch,eogs,ecg,emg):
     #
     for ch in eogs:
         ch_ix = inst.ch_names.index(ch)
-        inst._data[ch_ix, :] *= 1e-6
+        if suffix == 'raw':
+            inst._data[ch_ix] *= 1e-6
+        elif suffix == 'epo':
+            inst._data[:,ch_ix] *= 1e-6
         ch_order.append(ch)
         inst.set_channel_types({ch:'eog'})
     #
     ch_ix = inst.ch_names.index(ecg)
-    inst._data[ch_ix, :] *= 1e-6
+    if suffix == 'raw':
+        inst._data[ch_ix] *= 1e-6
+    elif suffix == 'epo':
+        inst._data[:,ch_ix] *= 1e-6
     ch_order.append(ecg)
     inst.set_channel_types({ecg:'ecg'})
     #
-    ch_ix = inst.ch_names.index(emg)
-    inst._data[ch_ix, :] *= 1e-6
-    ch_order.append(emg)
-    inst.set_channel_types({emg:'emg'})
+    try:
+        ch_ix = inst.ch_names.index(emg)
+        if suffix == 'raw':
+            inst._data[ch_ix] *= 1e-6
+        elif suffix == 'epo':
+            inst._data[:,ch_ix] *= 1e-6
+        ch_order.append(emg)
+        inst.set_channel_types({emg:'emg'})
+    except: 
+        print('No EMG')
+    #
+    if suffix != 'epo':
+        if stim is not None:
+            ch_ix = inst.ch_names.index(stim)
+            ch_order.append(stim)
+            inst.set_channel_types({stim:'stim'})
     #
     inst = inst.set_montage(montage,verbose=False)
     #
