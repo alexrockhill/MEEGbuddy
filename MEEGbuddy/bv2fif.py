@@ -196,13 +196,15 @@ def prepInst(inst,dataf,suffix,montage,ref_ch,eogs,ecg,emg,stim):
         print('No EMG')
     #
     if suffix != 'epo':
-        if stim is not None:
+        if stim in inst.ch_names:
             ch_ix = inst.ch_names.index(stim)
             ch_order.append(stim)
             inst.set_channel_types({stim:'stim'})
     #
     inst = inst.set_montage(montage,verbose=False)
     #
+    if not all([ch in inst.ch_names for ch in ch_order]):
+        ch_order = sorted(inst.ch_names)
     inst = inst.reorder_channels(ch_order)
     #
     fname = (os.path.join(os.path.dirname(dataf),

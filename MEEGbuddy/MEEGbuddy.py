@@ -1173,7 +1173,7 @@ class MEEGbuddy:
                               n_events=n_events,response=True)
 
     def _find_events(self,raw,ch): #backward compatible
-        if isinstance(ch,list):
+        if isinstance(ch,tuple):
             ch, event_id = ch
         else:
             event_id = None
@@ -1458,7 +1458,8 @@ class MEEGbuddy:
                 nTR = min([len(value_indices[value]) for value in value_indices])
 
         if picks is not None:
-           picks = pick_types(epochs.info,meg=False, eog=False,include=picks)
+           picks = pick_types(epochs.info,meg=self.meg,eeg=self.eeg,
+                              eog=False,include=picks)
 
         x_dim = (1+image)*(2*self.meg+self.eeg)
         y_dim = len(values)
@@ -1488,7 +1489,6 @@ class MEEGbuddy:
                 axs2 = axs[:,i]
             else:
                 axs2 = axs
-
             axs3 = ([axs2[0], axs2[1], axs2[2]] if self.meg and self.eeg else
                     [axs2[0]] if self.eeg else [axs2[0], axs2[1]])
             evoked.plot(axes=axs3,show=False,ylim=ylim,picks=picks)
