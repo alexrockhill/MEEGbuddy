@@ -29,7 +29,7 @@ To run the demo:
 2. install dependencies if you haven't already: run "pip install -r requirements.txt" OR run "pip install pandas mne scipy autoreject seaborn matplotlib tqdm joblib nitime pysurfer naturalneighbor mayavi"
 3. run "jupyter notebook"
 
-This was originally designed in python2 but now is only supported in python3
+Only python3 is supported.
 
 ## Citation 
 AP. Rockhill (2018). MEEGbuddy. GitHub Repository. https://github.com/alexrockhill/MEEGbuddy.
