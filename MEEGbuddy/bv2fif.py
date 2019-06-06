@@ -2,10 +2,10 @@ import sys
 import os, glob
 import os.path as op
 from mne import find_events, Epochs, EpochsArray
-from mne.io import read_raw_brainvision,RawArray
+from mne.io import read_raw_brainvision, RawArray
 from mne.channels import read_dig_montage
 import numpy as np
-from mne import create_info,events_from_annotations
+from mne import create_info, events_from_annotations
 from tqdm import tqdm
 
 ch_name_order = \
@@ -180,14 +180,21 @@ def bv2fif(dataf, corf, ch_order=None, aux=('VEOG', 'HEOG', 'ECG', 'EMG'),
     channels while using memory mapping. A script to circumvent 
     this also exists.
     """
-    montage = read_dig_montage(bvct=corf)
+    if corf is None:
+        montage = None
+    elif '.bvct' in op.basename(corf):
+        montage = read_dig_montage(bvct=corf)
+    elif '.csv' in op.basename(corf):
+        montage = read_dig_montage(csv=corf, transform=False)  # no fiducials in Localite, can't transform
+    else:
+        raise ValueError('corf not understood')
     if preload == 'default':
         preload = os.path.dirname(dataf) + '/workfile'
     #
     raw = read_raw_brainvision(dataf, preload=preload)
     #
     if ch_order is None:
-        if all([ch in raw.ch_names for ch in ch_order]):
+        if all([ch in ch_name_order for ch in raw.ch_names]):
             order_dict = {ch: ch_name_order.index(ch) for ch in raw.ch_names}
             ch_order = sorted(order_dict, key=order_dict.get)
         else:  # if no channel order is given and we get names we didn't expect, just sort the channels
@@ -215,20 +222,21 @@ def bv2fif(dataf, corf, ch_order=None, aux=('VEOG', 'HEOG', 'ECG', 'EMG'),
                     preload=preload, baseline=baseline, verbose=False,
                     detrend=detrend)
     events = events[epochs.selection]  #in case any epochs don't have data and get thrown out (poorly placed at beginning or end)
-    epo.event_id = {str(i):i for i in range(len(events))}
+    epochs.event_id = {str(i):i for i in range(len(events))}
 
-    prepInst(epo, dataf, 'epo', montage, ref_ch, aux,
+    prepInst(epochs, dataf, 'epo', montage, ref_ch, aux,
              'DBS' if dbs else 'TMS', ch_order)
 
 
 def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):
-    info = create_info([ref_ch], inst.info['sfreq'], ['eeg'], verbose=False)
-    info['lowpass'] = inst.info['lowpass']
-    if suffix == 'raw':
-        ref = RawArray(np.zeros((1, len(inst.times))),info,verbose=False)
-    elif suffix == 'epo':
-        ref = EpochsArray(np.zeros((len(inst),1,len(inst.times))),info,verbose=False)
-    inst = inst.add_channels([ref]) #, force_update_info=True)
+    if ref_ch is not None:
+        info = create_info([ref_ch], inst.info['sfreq'], ['eeg'], verbose=False)
+        info['lowpass'] = inst.info['lowpass']
+        if suffix == 'raw':
+            ref = RawArray(np.zeros((1, len(inst.times))),info,verbose=False)
+        elif suffix == 'epo':
+            ref = EpochsArray(np.zeros((len(inst),1,len(inst.times))),info,verbose=False)
+        inst = inst.add_channels([ref]) #, force_update_info=True)
     #
     inst = inst.set_eeg_reference(ref_channels='average', projection=False,
                                   verbose=False)
@@ -244,7 +252,7 @@ def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):
             elif suffix == 'epo':
                 inst._data[:, ch_ix] *= 1e-6
             ch_order.append(ch)
-            inst.set_channel_types({ch:'eog'})
+            inst.set_channel_types({ch: 'eog'})
         except Exception as e: 
             print(e, '%s channel not working' % ch)
     #
@@ -254,7 +262,8 @@ def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):
             ch_order.append(stim)
             inst.set_channel_types({stim:'stim'})
     #
-    inst = inst.set_montage(montage,verbose=False)
+    if montage is not None:
+        inst = inst.set_montage(montage, verbose=False)
     #
     inst = inst.reorder_channels(ch_order)
     #

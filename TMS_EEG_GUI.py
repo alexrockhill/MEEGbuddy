@@ -11,7 +11,8 @@ from tkinter import (Tk, Canvas, Frame, Label, Button, Entry, Listbox, Scrollbar
                      OptionMenu, StringVar, IntVar, Checkbutton, Text)
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import json
-from MEEGbuddy import MEEGbuddy,bv2fif
+from MEEGbuddy import MEEGbuddy
+from MEEGbuddy.bv2fif import bv2fif
 from mne import create_info, find_events, pick_types
 from mne.io import Raw, read_raw_brainvision, RawArray
 from mne.channels import read_dig_montage
@@ -288,7 +289,7 @@ class TMS_EEG_GUI(Frame):
             self.print_to_terminal('Recon already run, skipping')
         else:
             self.output_to_terminal('recon-all -subjid %s ' %(subject) + 
-                                    '-i %s --all' %(t1))
+                                    '-i %s -all' %(t1))
 
         ico = int(self.data_entries['ico'].get())
         conductivity = np.array(self.data_entries['conductivity'].get().split(','),
