@@ -620,7 +620,7 @@ class MEEGbuddy:
     def _save_source(self, stc, event, condition, value, keyword=None):
         self._file_saved('Source Estimate', event=event, condition=condition,
                           value=value, keyword=keyword)
-        stc.save(self._fname('source_estimates','source', none, keyword,
+        stc.save(self._fname('source_estimates','source', None, keyword,
                              event, condition, value),
                  ftype='stc')
 
@@ -753,7 +753,7 @@ class MEEGbuddy:
             inst_info['nchan'] += inst.info['nchan']
             inst_info['bads'] += inst.info['bads']
 
-        if isinstance(insts[0], baseRaw):
+        if isinstance(insts[0], BaseRaw):
             return RawArray(inst_data, inst_info).set_annotations(insts[0].annotations)
         else:
             return EpochsArray(inst_data, inst_info, events=insts[0].events, tmin=insts[0].tmin)
@@ -797,7 +797,7 @@ class MEEGbuddy:
             fig.savefig(self._fname('plots','components','jpg', dt, keyword_out))
             plt.close(fig)
 
-            if isinstance(inst, baseRaw):
+            if isinstance(inst, BaseRaw):
                 raw = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
                                              eeg=(dt == 'eeg'), eog=True, ecg=True,
                                              exclude=[])
@@ -818,7 +818,7 @@ class MEEGbuddy:
             print('No eog, ecg or stim channels', e)
         inst = self._combine_insts(ica_insts)
 
-        if isinstance(inst, baseRaw):
+        if isinstance(inst, BaseRaw):
             self._save_raw(inst, keyword=keyword_out)
         else:
             self._save_epochs(inst, event, keyword=keyword_out)
@@ -941,7 +941,7 @@ class MEEGbuddy:
                                            eeg=(dt == 'eeg'), exclude=[])
             ica = self._load_ICA(event=event, data_type=dt,
                                  keyword=keyword_out)
-            if isinstance(inst, baseRaw):
+            if isinstance(inst, BaseRaw):
                 for ch in eogs:
                     try:
                         evoked = self._load_evoked('ica_%s' % ch,
@@ -963,7 +963,7 @@ class MEEGbuddy:
             fig.show()
             ica.plot_sources(inst2, block=show, show=show, title=self.subject)
             inst2 = ica.apply(inst2, exclude=ica.exclude)
-            if isinstance(inst, baseRaw):
+            if isinstance(inst, BaseRaw):
                 for ch in eogs:
                     try:
                         evoked = self._load_evoked('ica_%s' % ch,
@@ -999,7 +999,7 @@ class MEEGbuddy:
             print('No eog, ecg or stim channels', e)
         inst = self._combine_insts(ica_insts)
 
-        if isinstance(inst, baseRaw):
+        if isinstance(inst, BaseRaw):
             self._save_raw(inst, keyword=keyword_out)
         else:
             self._save_epochs(inst, event, keyword=keyword_out)
@@ -1831,7 +1831,7 @@ class MEEGbuddy:
                                        '%s-%s' % (values[0], values[1]),
                                        data_type=dt, keyword=cpt_keyword)
                 else:
-                    clusters, cluster_p_values = None, none
+                    clusters, cluster_p_values = None, None
                 self._plot_decider(epochs_mean, epochs_std, times, axs, fig, butterfly,
                                    contrast, values, ch_dict, tfr, band, frequencies,
                                    vmin, vmax, clusters, cluster_p_values, cpt_p)
@@ -1844,7 +1844,7 @@ class MEEGbuddy:
                                            data_type=dt,
                                            keyword=cpt_keyword)
                     else:
-                        clusters, cluster_p_values = None, none
+                        clusters, cluster_p_values = None, None
                     if butterfly:
                         axs[i].set_title(value)
                         self._plot_decider(epochs_mean, epochs_std, times, axs[i], fig,
@@ -2120,8 +2120,8 @@ class MEEGbuddy:
                 del bl_tfr
 
 
-    def psdMultitaper(self, keyword=None, ch='Oz', n=6, deltaN=0.25, nW=3.0,
-                      fmin=0.5, fmax=25, bW=1.0, assign_states=True,
+    def psdMultitaper(self, keyword=None, ch='Oz', N=6, deltaN=0.25, NW=3.0,
+                      fmin=0.5, fmax=25, BW=1.0, assign_states=True,
                       labels={'Wake':'red','Sleep':'white'}, overwrite=False,
                       n_jobs=10, vmin=None, vmax=None, adaptive=False,
                       jackknife=True, low_bias=True):
@@ -2148,7 +2148,7 @@ class MEEGbuddy:
             with Parallel(n_jobs=n_jobs) as parallel:
                 results = parallel(delayed(tsa.multi_taper_psd)(
                             raw_data[int(i*deltaN*Fs):int(i*deltaN*Fs)+int(N*Fs)],
-                            Fs=Fs, nW=NW, bW=BW, adaptive=adaptive,
+                            Fs=Fs, NW=NW, BW=BW, adaptive=adaptive,
                             jackknife=jackknife, low_bias=low_bias)
                                     for i in tqdm(range(n_windows)))
             fs, psd_mts, nus = zip(*results)
@@ -2158,7 +2158,7 @@ class MEEGbuddy:
                     counters[j] += 1
             for k in range(imsize):
                 image[k] /= counters
-            f = np.linspace(0, fs/2, imsize)
+            f = np.linspace(0, Fs/2, imsize)
             f_inds = [i for i, freq in enumerate(f) if
                       (freq >= fmin and freq <= fmax)]
             image = image[f_inds]
@@ -2205,7 +2205,7 @@ class MEEGbuddy:
             ax.set_xlabel('Time (s)')
         fig2.savefig(self._fname('plots','psd_multitaper','jpg',
                                  'N_%i_dN_%.2f' % (N, deltaN),
-                                 'fmin_%.2f_fmax_%.2f_NW_%i' % (fmin, fmax, nW)))
+                                 'fmin_%.2f_fmax_%.2f_NW_%i' % (fmin, fmax, NW)))
         plt.close(fig2)
 
         if assign_states:
@@ -2912,7 +2912,7 @@ class MEEGbuddy:
             if self._has_epochs(event, keyword=keyword_out) and not overwrite:
                 self._overwrite_error('Epochs', event=event, keyword=keyword_out)
             self._save_epochs(inst, event, keyword=keyword_out)
-        elif isinstance(inst, baseRaw):
+        elif isinstance(inst, BaseRaw):
             if self._has_raw(keyword=keyword_out) and not overwrite:
                 self._overwrite_error('Raw', keyword=keyword_out)
             self._save_raw(inst, keyword=keyword_out)
