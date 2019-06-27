@@ -277,7 +277,7 @@ def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):
 
 if __name__  == '__main__':
     if len(sys.argv) != 3:
-        raise ValueError('Please provide the .vhdr and the .bvct files')
+        raise ValueError('Please provide the .vhdr and the .bvct or .csv files')
 
     _,dataf,corf = sys.argv
     bv2fif(dataf,corf)
