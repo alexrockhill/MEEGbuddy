@@ -2,6 +2,19 @@ import os
 import os.path as op
 
 try:
+    import matplotlib
+    matplotlib.use('TKagg')
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    import matplotlib.ticker as ticker
+    from matplotlib.colors import SymLogNorm, LogNorm
+    from matplotlib import animation, rc
+    import seaborn as sns
+    from .psd_multitaper_plot_tools import ButtonClickProcessor
+    from .gif_combine import combine_gifs
+except:
+    print('Unable to import plot tools. Install matplotlib, seaborn and PIL to solve this.')
+try:
     from mne.io import Raw, RawArray, set_eeg_reference, BaseRaw
     from mne.preprocessing import (ICA, read_ica, create_eog_epochs,
                                    create_ecg_epochs, fix_stim_artifact,
@@ -50,19 +63,6 @@ try:
     from . import pci
 except:
     print('Unable to import pci, you won\'t be able to use this analysis')
-try:
-    import matplotlib
-    #matplotlib.use('TKagg')
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-    import matplotlib.ticker as ticker
-    from matplotlib.colors import SymLogNorm, LogNorm
-    from matplotlib import animation, rc
-    import seaborn as sns
-    from .psd_multitaper_plot_tools import ButtonClickProcessor
-    from .gif_combine import combine_gifs
-except:
-    print('Unable to import plot tools. Install matplotlib, seaborn and PIL to solve this.')
 try:
     import nitime.algorithms as tsa
 except:
@@ -125,6 +125,8 @@ class MEEGbuddy:
                 subjects_dir = os.getcwd()
                 print('No subjects_dir supplied defaulting to current working directory')
 
+            meta_data['Subjects Directory'] = subjects_dir
+
             name = str(subject) + '_'
             name += str(session) + '_' if session is not None else ''
             name += str(task) + '_' if task is not None else ''
@@ -134,9 +136,6 @@ class MEEGbuddy:
             file = op.join(subjects_dir, 'meta_data', name + '.json')
             if not op.isdir(os.path.dirname(file)):
                 os.makedirs(os.path.dirname(file))
-
-
-            meta_data['Subjects Directory'] = subjects_dir
 
             if fdata is None:
                 raise ValueError('Please supply raw file or list of files to combine')
@@ -3869,11 +3868,13 @@ def create_demi_events(raw_fname, window_size, shift, epoches_nun=0,
 
 
 def loadMEEGbuddy(subjects_dir, subject, session=None, task=None,
-                  eeg=True, meg=True):
+                  eeg=False, meg=False, ecog=False, seeg=False):
     name = str(subject) + '_'
     name += str(session) + '_' if session is not None else ''
     name += str(task) + '_' if task is not None else ''
-    name += 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
+    for dt, v in {'meg': meg, 'eeg': eeg, 'ecog': ecog, 'seeg': seeg}.items():
+        if v:
+            name += dt
     file = op.join(subjects_dir, 'meta_data', name + '.json')
     if op.isfile(file):
         return MEEGbuddy(file=file)
@@ -3883,14 +3884,14 @@ def loadMEEGbuddy(subjects_dir, subject, session=None, task=None,
 
 def loadMEEGbuddies(subjects_dir, meg=None, eeg=None, task=None, shuffled=False,
                     seed=11):
-    mbs = os.listdir(op.join(subjects_dir,'meta_data'))
+    mbs = os.listdir(op.join(subjects_dir, 'meta_data'))
     for mb in mbs.copy():
         if (op.splitext(mb)[1] != '.json' or
             (meg is not None and (meg and not 'meg' in mb or not meg and 'meg' in mb)) or
             (eeg is not None and (eeg and not 'eeg' in mb or not eeg and 'eeg' in mb)) or
             (task is not None and not task in mb)):
             mbs.remove(mb)
-    mbs = [MEEGbuddy(file=op.join(subjects_dir,'meta_data', mb)) for mb in mbs]
+    mbs = [MEEGbuddy(file=op.join(subjects_dir, 'meta_data', mb)) for mb in mbs]
     if shuffled:
         np.random.seed(seed)
         np.random.shuffle(mbs)
