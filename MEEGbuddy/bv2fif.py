@@ -188,6 +188,9 @@ def bv2fif(dataf, corf, ch_order=None, aux=('VEOG', 'HEOG', 'ECG', 'EMG'),
         montage = read_dig_montage(csv=corf, transform=False)  # no fiducials in Localite, can't transform
     else:
         raise ValueError('corf not understood')
+    use_find_events = ((dbs and use_find_events == 'dbs') or 
+                       (isinstance(use_find_events, bool) and 
+                        use_find_events))
     if preload == 'default':
         preload = os.path.dirname(dataf) + '/workfile'
     #
@@ -200,32 +203,32 @@ def bv2fif(dataf, corf, ch_order=None, aux=('VEOG', 'HEOG', 'ECG', 'EMG'),
         else:  # if no channel order is given and we get names we didn't expect, just sort the channels
             ch_order = sorted(inst.ch_names)
     #
-    if dbs and use_find_events == 'dbs' or use_find_events:
+    if use_find_events:
         event_ch = get_events(raw)
-    else:
-        events, event_ids = events_from_annotations(raw)
-    #
-    if dbs and use_find_events == 'dbs' or use_find_events:
         old_event_ch = [ch for ch in raw.info['ch_names'] if 'STI' in ch]
         if old_event_ch:
             raw.drop_channels([old_event_ch[0]])
         raw.add_channels([event_ch])
         if use_find_events and use_find_events != 'dbs':
             raw.rename_channels({'DBS':'TMS'})
+    else:
+        events, event_ids = events_from_annotations(raw)
     #
     prepInst(raw, dataf, 'raw', montage, ref_ch, aux,
              'DBS' if dbs else 'TMS', ch_order)
     #
     if len(np.unique(events[:,2])) > 1:
-        events = events[np.where(events[:,2] == events[1,2])[0]] #skip new segment
+        events = events[np.where(events[:,2] == events[-1, 2])[0]] #skip new segment
     epochs = Epochs(raw, events, tmin=tmin, tmax=tmax, proj=False,
                     preload=preload, baseline=baseline, verbose=False,
                     detrend=detrend)
     events = events[epochs.selection]  #in case any epochs don't have data and get thrown out (poorly placed at beginning or end)
     epochs.event_id = {str(i):i for i in range(len(events))}
-
+    #
     prepInst(epochs, dataf, 'epo', montage, ref_ch, aux,
              'DBS' if dbs else 'TMS', ch_order)
+    if isinstance(preload, str) and op.isfile(preload):
+        os.remove(preload)
 
 
 def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):
@@ -235,7 +238,7 @@ def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):
         if suffix == 'raw':
             ref = RawArray(np.zeros((1, len(inst.times))),info,verbose=False)
         elif suffix == 'epo':
-            ref = EpochsArray(np.zeros((len(inst),1,len(inst.times))),info,verbose=False)
+            ref = EpochsArray(np.zeros((len(inst), 1, len(inst.times))),info,verbose=False)
         inst = inst.add_channels([ref]) #, force_update_info=True)
     #
     inst = inst.set_eeg_reference(ref_channels='average', projection=False,
@@ -244,23 +247,24 @@ def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):
         while len(inst.picks) != len(inst.ch_names): # weird picks bug
             inst.picks = np.append(inst.picks, len(inst.picks))
     #
-    for ch in aux:
-        try:
-            ch_ix = inst.ch_names.index(ch)
-            if suffix == 'raw':
-                inst._data[ch_ix] *= 1e-6
-            elif suffix == 'epo':
-                inst._data[:, ch_ix] *= 1e-6
-            ch_order.append(ch)
-            inst.set_channel_types({ch: 'eog'})
-        except Exception as e: 
-            print(e, '%s channel not working' % ch)
+    if aux is not None:
+        for ch in aux:
+            try:
+                ch_ix = inst.ch_names.index(ch)
+                if suffix == 'raw':
+                    inst._data[ch_ix] *= 1e-6
+                elif suffix == 'epo':
+                    inst._data[:, ch_ix] *= 1e-6
+                ch_order.append(ch)
+                inst.set_channel_types({ch: 'eog'})
+            except Exception as e: 
+                print(e, '%s channel not working' % ch)
     #
     if suffix != 'epo':
         if stim in inst.ch_names:
             ch_ix = inst.ch_names.index(stim)
             ch_order.append(stim)
-            inst.set_channel_types({stim:'stim'})
+            inst.set_channel_types({stim: 'stim'})
     #
     if montage is not None:
         inst = inst.set_montage(montage, verbose=False)
@@ -268,7 +272,7 @@ def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):
     inst = inst.reorder_channels(ch_order)
     #
     fname = (os.path.join(os.path.dirname(dataf),
-             os.path.basename(dataf).split('.')[0]+'-%s.fif' %(suffix)))
+             os.path.basename(dataf).split('.')[0]+'-%s.fif' % suffix))
     print('Saving to ' + fname)
     if suffix == 'raw':
         inst.save(fname, verbose=False, overwrite=True)

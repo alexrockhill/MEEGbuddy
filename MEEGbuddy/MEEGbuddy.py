@@ -22,7 +22,6 @@ try:
                                   write_inverse_operator, source_induced_power,
                                   source_band_induced_power)
     from mne.connectivity import spectral_connectivity
-    from mne.connectivity import spectral_connectivity
     from mne.chpi import read_head_pos
     from mne.stats import permutation_cluster_test
 except Exception as e:
@@ -53,7 +52,7 @@ except:
     print('Unable to import pci, you won\'t be able to use this analysis')
 try:
     import matplotlib
-    matplotlib.use('TKagg')
+    #matplotlib.use('TKagg')
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
     import matplotlib.ticker as ticker
@@ -734,11 +733,11 @@ class MEEGbuddy:
         if eogs is None:
             inds = pick_types(inst.info, meg=False, eog=True)
             eogs = [inst.ch_names[ind] for ind in inds]
-            print('Using ' + ' '.join(eogs) + ' as eogs')
+            print('Using ' + (' '.join(eogs) if eogs else 'no channels') + ' as eogs')
         if ecgs is None:
             inds = pick_types(inst.info, meg=False, ecg=True)
             ecgs = [inst.ch_names[ind] for ind in inds]
-            print('Using ' + ' '.join(ecgs) + ' as ecgs')
+            print('Using ' + (' '.join(ecgs) if ecgs else 'no channels') + ' as ecgs')
         return eogs, ecgs
 
     def _combine_insts(self, insts):
@@ -788,7 +787,7 @@ class MEEGbuddy:
         for dt in data_types:
             print(dt)
             inst2 = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
-                                           eeg=(dt == 'eeg'), exclude=[])
+                                           eeg=(dt == 'eeg'))
             ica = ICA(method='fastica', n_components=n_components,
                       random_state=seed)
             ica.fit(inst2)
@@ -796,11 +795,10 @@ class MEEGbuddy:
                                       show=False)
             fig.savefig(self._fname('plots','components','jpg', dt, keyword_out))
             plt.close(fig)
-
+            #
             if isinstance(inst, BaseRaw):
                 raw = inst.copy().pick_types(meg=False if dt == 'eeg' else dt,
-                                             eeg=(dt == 'eeg'), eog=True, ecg=True,
-                                             exclude=[])
+                                             eeg=(dt == 'eeg'), eog=True, ecg=True)
                 all_scores = self._make_ICA_components(raw, ica, eogs, ecgs, detrend,
                                                        l_freq, h_freq, dt, keyword_out,
                                                        vis_tmin, vis_tmax)
@@ -1143,6 +1141,7 @@ class MEEGbuddy:
             epochs = epochs.resample(new_sfreq, npad=npad, window=window,
                                      n_jobs=n_jobs)
             self._save_epochs(epochs, event, keyword=keyword_out)
+
 
     def makeEpochs(self, keyword_in=None, keyword_out=None, detrend=0,
                    normalized=True, overwrite=False):
@@ -2232,9 +2231,11 @@ class MEEGbuddy:
         try:
             df = read_csv(self.behavior)
             df[condition] = states
-        except:
+        except Exception as e:
             df = DataFrame({condition:states})
             self._add_meta_data({'Behavior':self.behavior}, overwrite=True)
+        if not op.isdir(op.dirname(self.behavior)):
+            os.makedirs(op.dirname(self.behavior))
         df.to_csv(self.behavior)
 
 
@@ -2611,7 +2612,7 @@ class MEEGbuddy:
         inv = self._generate_inverse(epochs, fwd, bl_epochs, lambda2, method,
                                      pick_ori)
         self._save_inverse(inv, lambda2, method, pick_ori,
-                           event, condition,'all', keyword_out)
+                           event, condition, 'all', keyword_out)
         if save_baseline_stc:
             print('Applying inverse on baseline for all...')
             bl_evoked = bl_epochs.average()
@@ -3339,8 +3340,9 @@ class MEEGbuddy:
 
 
 
-    def noreunPhi(self, event, condition, values=None, keyword_in=None,
-                  keyword_out=None, tmin=None, tmax=None, npoint_art=0,
+    def noreunPhi(self, event, condition, values=None, keyword_in=None, 
+                  source_keyword=None, keyword_out=None, 
+                  tmin=None, tmax=None, npoint_art=0,
                   Nboot=480, alpha=0.01, downsample=True, seed=11,
                   shared_baseline=False, bl_tmin=-0.5, bl_tmax=-0.1,
                   recalculate_baseline=False, recalculate_PCI=False):
@@ -3359,7 +3361,7 @@ class MEEGbuddy:
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
                                               projection=True, verbose=False)
-        epochs = self._pick_types(epochs,'eeg')
+        epochs = self._pick_types(epochs, 'eeg')
         info = epochs.info
         values = self._default_values(condition, values=values)
         value_indices = self._get_indices(epochs, condition, values)
@@ -3367,10 +3369,10 @@ class MEEGbuddy:
                              np.where(epochs.times<=bl_tmax))
         nTR = min([len(value_indices[value]) for value in value_indices])
 
-        def preprocess(epochs, indices, bl_tind, event, condition, value, keyword_in):
+        def preprocess(epochs, indices, bl_tind, event, condition, value, source_keyword):
             Y = epochs[indices].get_data()
             inv, lambda2, method, pick_ori = \
-                self._load_inverse(event, condition, value, keyword=keyword_in)
+                self._load_inverse(event, condition, value, keyword=source_keyword)
             nSRC = inv['nsource']
             nTIME = len(epochs.times)
             J = apply_inverse(epochs[indices].average(), inv,
@@ -3445,7 +3447,7 @@ class MEEGbuddy:
                     indices = downsampleIndices(indices, nTR, condition, value)
                 Y, J, inv, lambda2, method, pick_ori, NUM, DEN, Norm = \
                     preprocess(epochs, indices, bl_tind, event, condition, value,
-                               keyword_in)
+                               source_keyword)
                 Threshold = baseline_bootstrap(Y, J, bl_tind, Norm, NUM, DEN, Nboot,
                                                alpha, info, inv, lambda2, method,
                                                pick_ori)
@@ -3467,7 +3469,7 @@ class MEEGbuddy:
                                                keyword_out)
                 Y, J, inv, lambda2, method, pick_ori, NUM, DEN, Norm = \
                     preprocess(epochs, indices, bl_tind, event, condition, value,
-                               keyword_in)
+                               source_keyword)
                 tind = gettind(epochs, tmin, tmax, npoint_art)
                 # determines sources matrices
                 binJ=np.array(np.abs(J)>Threshold, dtype=int)
