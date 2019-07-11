@@ -121,17 +121,20 @@ class MEEGbuddy:
         if file is None:
             meta_data = {}
 
-            name = str(subject) + '_'
-            name += str(session) + '_' if session is not None else ''
-            name += str(task) + '_' if task is not None else ''
-            name += 'meeg' if eeg and meg else 'eeg'*eeg + 'meg'*meg
-            file = os.path.join(subjects_dir,'meta_data', name + '.json')
-            if not os.path.isdir(os.path.dirname(file)):
-                os.makedirs(os.path.dirname(file))
-
             if subjects_dir is None:
                 subjects_dir = os.getcwd()
                 print('No subjects_dir supplied defaulting to current working directory')
+
+            name = str(subject) + '_'
+            name += str(session) + '_' if session is not None else ''
+            name += str(task) + '_' if task is not None else ''
+            for dt, v in {'meg': meg, 'eeg': eeg, 'ecog': ecog, 'seeg': seeg}.items():
+                if v:
+                    name += dt
+            file = op.join(subjects_dir, 'meta_data', name + '.json')
+            if not op.isdir(os.path.dirname(file)):
+                os.makedirs(os.path.dirname(file))
+
 
             meta_data['Subjects Directory'] = subjects_dir
 
@@ -211,7 +214,7 @@ class MEEGbuddy:
                       'file identies for clarity and troubleshooting. Pass ' +
                       'fs_subjects_dir=False to supress this warning')
             else:
-                if not os.path.isdir(fs_subjects_dir):
+                if fs_subjects_dir and not os.path.isdir(fs_subjects_dir):
                     raise ValueError('fs_subjects_dir not a directory')
             meta_data['Freesufer SUBJECTS_DIR'] = fs_subjects_dir
 
@@ -241,10 +244,10 @@ class MEEGbuddy:
                           'This can then be saved out as a coordinate transform file.')
             meta_data['Coordinate Transform'] = transf
 
-            with open(file,'w') as f:
+            with open(file, 'w') as f:
                 json.dump(meta_data, f)
 
-        with open(file,'r') as f:
+        with open(file, 'r') as f:
             meta_data = json.load(f)
             self.subject = meta_data['Subject']
             self.session = meta_data['Session']
