@@ -5,7 +5,11 @@ import sys, os
 import os.path as op
 import numpy as np
 from pandas import read_csv, DataFrame
-from mne import RawArray, create_info, Annotations
+from mne.io import RawArray
+from mne import create_info, Annotations
+
+channel_conversion = {'0': 'Fp1', '1': 'Fp2', '2': 'F3', '3': 'F4', 
+     				  '4': 'Fz', '5': 'P7', '6': 'P8', '7': 'Oz'}
 
 def easy2fif(easyf):
 	infof = op.join(op.dirname(easyf), op.basename(easyf.replace('.easy', '.info')))
@@ -62,7 +66,10 @@ def easy2fif(easyf):
 	sfreq = float(info_dict['EEG sampling rate'].split(' ')[0])
 	info = create_info(ch_names, sfreq, ch_types, verbose=False)
 	raw = RawArray(arr, info, verbose=False)
-	raw.save(op.join(op.dirname(easyf), op.basename(easyf.replace('.easy', '.fif'))))
+	if all([ch in channel_conversion for ch in raw.ch_names]):
+		raw.rename_channels(channel_conversion)
+	return raw
+	#raw.save(op.join(op.dirname(easyf), op.basename(easyf.replace('.easy', '-raw.fif'))))
 	#raw.set_eeg_reference(ref_channels='average', projection=False)
 
 	'''test
