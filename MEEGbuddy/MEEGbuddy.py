@@ -2,91 +2,18 @@ import os
 import os.path as op
 
 try:
-    import matplotlib
-    matplotlib.use('TKagg')
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-    import matplotlib.ticker as ticker
-    from matplotlib.colors import SymLogNorm, LogNorm
-    from matplotlib import animation, rc
-    import seaborn as sns
-    from .psd_multitaper_plot_tools import ButtonClickProcessor
-    from .gif_combine import combine_gifs
-except:
-    print('Unable to import plot tools. Install matplotlib, seaborn and PIL to solve this.')
-try:
-    from mne.io import Raw, RawArray, set_eeg_reference, BaseRaw
-    from mne.preprocessing import (ICA, read_ica, create_eog_epochs,
-                                   create_ecg_epochs, fix_stim_artifact,
-                                   maxwell_filter)
-    from mne.epochs import concatenate_epochs
-    from mne import (compute_covariance, Epochs, EpochsArray, find_events,
-                     pick_types, read_source_estimate, compute_morph_matrix,
-                     set_log_level, read_trans, read_bem_solution,
-                     make_forward_solution, read_epochs, read_source_spaces,
-                     BaseEpochs, read_evokeds, EvokedArray, read_labels_from_annot,
-                     Label, events_from_annotations)
-    from mne.utils import set_config
-    from mne.time_frequency import (morlet, tfr_morlet, tfr_array_morlet,
-                                    tfr_array_multitaper, AverageTFR, morlet)
-    from mne.time_frequency.tfr import cwt
-    from mne.minimum_norm import (make_inverse_operator, apply_inverse_epochs,
-                                  apply_inverse, read_inverse_operator,
-                                  write_inverse_operator, source_induced_power,
-                                  source_band_induced_power)
-    from mne.connectivity import spectral_connectivity
-    from mne.chpi import read_head_pos
-    from mne.stats import permutation_cluster_test
-except Exception as e:
-    print(e)
-    raise ImportError('Unable to load MNE... must install to continue')
-try:
     import glob, re, json
     import numpy as np
     from tqdm import tqdm
     from pandas import read_csv, DataFrame
-    from joblib import Parallel, delayed
-    from scipy.stats import stats, mstats, linregress
-    from scipy import linalg, interpolate
-    from scipy.signal import detrend
-    from scipy.io import savemat
-    import warnings
 except:
-    raise ImportError('Unable to import core tools (pandas, glob, re, json, scipy,' +
-                      'tqdm, joblib, warnings)... must install to continue')
+    raise ImportError('Unable to import core tools (pandas, glob, re, json,' +
+                      'tqdm)... must install to continue')
 try:
-    from autoreject import AutoReject, compute_thresholds, set_matplotlib_defaults
+    import matplotlib.pyplot as plt
 except:
-    print('Unable to import autoreject... you won\'t be able to use this feature ' +
-          'unless you install autoreject and its sklearn dependancy')
-try:
-    from . import pci
-except:
-    print('Unable to import pci, you won\'t be able to use this analysis')
-try:
-    import nitime.algorithms as tsa
-except:
-    print('Unable to import nitime... you won\'t be able to use this feature')
-try:
-    from surfer import Brain
-except:
-    print('Unable to import pysurfer... you won\'t be able to use this feature')
-try:
-    import naturalneighbor
-except:
-    print('No naturalneighbor')
-try:
-   from mne.viz import plot_head_positions
-except:
-   print('Unable to import MNE visualization')
-try:
-    from mayavi import mlab
-except:
-    print('Unable to import mayavi')
-try:
-    import moviepy.editor as mpy
-except: 
-    print('Unable to import MoviePy, connectivity animations will not be available')
+    raise ImportError('Unable to import matplotlib, install to continue.')
+
 
 class MEEGbuddy:
     '''
@@ -115,6 +42,8 @@ class MEEGbuddy:
         exclude_response: optional reponses to exclude for things like
             malfunctioning equiptment, experimenter error ect.
         '''
+        from mne import set_log_level
+        import warnings
         warnings.filterwarnings("ignore", category=DeprecationWarning)
         set_log_level("ERROR")
 
@@ -331,6 +260,7 @@ class MEEGbuddy:
 
 
     def _load_raw(self, keyword=None):
+        from mne.io import Raw
         if keyword is None:
             preload = self.preload if self.preload else op.join(self.subjects_dir,
                                                                 'workfile')
@@ -372,6 +302,7 @@ class MEEGbuddy:
                     for data_type in self._get_data_types()])
 
     def _load_ICA(self, event=None, keyword=None, data_type=None):
+        from mne.preprocessing import read_ica
         fname = self._fname('preprocessing','ica','fif',
                             data_type, keyword, event)
         if op.isfile(fname):
@@ -396,6 +327,7 @@ class MEEGbuddy:
 
 
     def _load_epochs(self, event, keyword=None):
+        from mne import read_epochs
         if not self._has_epochs(event, keyword=keyword):
             self._no_file_error('Epochs', event=event, keyword=keyword)
         epochs = read_epochs(self._fname('epochs','epo','fif', event, keyword),
@@ -419,6 +351,7 @@ class MEEGbuddy:
 
 
     def _load_evoked(self, event, data_type=None, keyword=None):
+        from mne import read_evokeds
         if not self._has_evoked(event, data_type=data_type, keyword=keyword):
             self._no_file_error('Evoked', event=event, data_type=data_type,
                                 keyword=keyword)
@@ -576,6 +509,7 @@ class MEEGbuddy:
 
 
     def _load_inverse(self, event, condition, value, keyword=None):
+        from mne.minimum_norm import read_inverse_operator
         if self._has_inverse(event, condition, value, keyword=keyword):
             fname = self._fname('source_estimates','inv','fif', keyword,
                                 event, condition, value)
@@ -591,6 +525,7 @@ class MEEGbuddy:
 
     def _save_inverse(self, inv, lambda2, method, pick_ori,
                       event, condition, value, keyword=None):
+        from mne.minimum_norm import write_inverse_operator
         self._file_saved('Inverse', event=event, condition=condition,
                          value=value, keyword=keyword)
         write_inverse_operator(self._fname('source_estimates','inv','fif',
@@ -608,6 +543,7 @@ class MEEGbuddy:
 
 
     def _load_source(self, event, condition, value, keyword=None):
+        from mne import read_source_estimate
         fname = self._fname('source_estimates','source-lh','stc', keyword,
                             event, condition, value)
         if self._has_source(event, condition, value, keyword=keyword):
@@ -706,19 +642,6 @@ class MEEGbuddy:
                 ['ecog']*self.ecog + ['seeg']*self.seeg)
 
 
-    def raw2mat(self, keyword=None, ch=None):
-        raw = self._load_raw(keyword=keyword)
-        if ch is None:
-            ch_dict = self._get_ch_dict(raw)
-        else:
-            ch_dict = {raw.info['ch_names'].index(ch):ch}
-        raw_data = raw.get_data()
-        data_dict = {}
-        for ch in ch_dict:
-            data_dict[ch_dict[ch]] = raw_data[ch]
-        savemat(self._fname('raw','data','mat', keyword), data_dict)
-
-
     def preprocess(self, event=None):
         # preprocessing
         self.autoMarkBads()
@@ -732,6 +655,7 @@ class MEEGbuddy:
                 ['Baseline']*(self.baseline is not None and baseline))
 
     def _default_aux(self, inst, eogs=None, ecgs=None):
+        from mne import pick_types
         if eogs is None:
             inds = pick_types(inst.info, meg=False, eog=True)
             eogs = [inst.ch_names[ind] for ind in inds]
@@ -743,6 +667,8 @@ class MEEGbuddy:
         return eogs, ecgs
 
     def _combine_insts(self, insts):
+        from mne import EpochsArray
+        from mne.io import RawArray, BaseRaw
         if len(insts) < 1:
             raise ValueError('Nothing to combine')
         inst_data = insts[0]._data
@@ -767,6 +693,9 @@ class MEEGbuddy:
         # keyword_out functionality was added so that ICA can be computed on
         # one raw data and applied to another
         # note: filter only filters evoked
+        from mne.io import BaseRaw
+        from mne.preprocessing import ICA
+
         keyword_out = keyword_in if keyword_out is None else keyword_out
         data_types = self._get_data_types()
 
@@ -868,6 +797,7 @@ class MEEGbuddy:
 
     def _make_ICA_components(self, raw, ica, eogs, ecgs, detrend, l_freq, h_freq,
                              data_type, keyword, vis_tmin, vis_tmax):
+        from mne.preprocessing import create_eog_epochs, create_ecg_epochs
         if vis_tmin is not None:
             raw = raw.copy().crop(tmin=vis_tmin)
         if vis_tmax is not None:
@@ -924,6 +854,7 @@ class MEEGbuddy:
                 eogs=None, ecgs=None, tmin=None, tmax=None,
                 ylim=dict(eeg=[-40,40], grad=[-400,400], mag=[-1000,1000]),
                 plot_properties=False, show=True):
+        from mne.io import BaseRaw
         keyword_out = keyword_in if keyword_out is None else keyword_out
         if event is None:
             inst = self._load_raw(keyword=keyword_in)
@@ -1084,6 +1015,7 @@ class MEEGbuddy:
 
     def plotRaw(self, n_per_screen=20, scalings=None, keyword_in=None,
                 keyword_out=None, l_freq=0.5, h_freq=40, overwrite=False):
+        from mne import pick_types
         keyword_out = keyword_in if keyword_out is None else keyword_out
         if (os.path.isfile(self._fname('raw','raw','fif', keyword_out))
             and not overwrite):
@@ -1147,6 +1079,7 @@ class MEEGbuddy:
 
     def makeEpochs(self, keyword_in=None, keyword_out=None, detrend=0,
                    normalized=True, overwrite=False):
+        from mne import EpochsArray
         keyword_out = keyword_in if keyword_out is None else keyword_out
         if (all([self._has_epochs(event, keyword_out) for event in self.getEvents()])
             and not overwrite):
@@ -1183,6 +1116,7 @@ class MEEGbuddy:
                               n_events=n_events, response=True)
 
     def _find_events(self, raw, ch): #backward compatible
+        from mne import find_events, events_from_annotations
         if isinstance(ch, tuple):
             ch, event_id = ch
         else:
@@ -1201,6 +1135,7 @@ class MEEGbuddy:
 
     def _make_epochs(self, raw, event, ch, tmin, tmax, detrend, keyword_out, n_events=None,
                      response=False):
+        from mne import Epochs
         try:
             events = self._find_events(raw, ch)
         except:
@@ -1346,6 +1281,8 @@ class MEEGbuddy:
                     tmin=None, tmax=None, tfr=False, band_struct=None,
                     vmin=None, vmax=None, contours=6, time_points=5,
                     show=True):
+        from mne.time_frequency import AverageTFR
+        from mne import EvokedArray
         epochs = self._load_epochs(event, keyword=keyword)
         values = self._default_values(condition, values, contrast)
         value_indices = self._get_indices(epochs, condition, values)
@@ -1454,6 +1391,7 @@ class MEEGbuddy:
                    ylim={'eeg':[-10,20]}, l_freq=None, h_freq=None,
                    tmin=None, tmax=None, detrend=1, seed=11, downsample=True,
                    picks=None, show=True):
+        from mne import pick_types
         epochs = self._prepare_epochs(event, epochs, keyword, tmin, tmax,
                                       l_freq, h_freq)
         if condition is None:
@@ -1670,6 +1608,7 @@ class MEEGbuddy:
 
 
     def _get_ch_dict(self, inst, aux=False):
+        from mne import pick_types
         if aux:
             chs = pick_types(inst.info, meg=False, eog=True, ecg=True)
         else:
@@ -1921,6 +1860,7 @@ class MEEGbuddy:
     def _plot_heatmap(self, epochs_mean, epochs_std, times, axs, fig, butterfly,
                       ch_dict, frequencies, vmin, vmax, clusters,
                       cluster_p_values, cpt_p):
+        from matplotlib.colors import SymLogNorm  #, LogNorm
         if clusters is not None:
             current_data = np.zeros(epochs_mean.shape)
             for i,(freq_cs, freq_ps) in enumerate(zip(clusters, cluster_p_values)):
@@ -2031,6 +1971,7 @@ class MEEGbuddy:
                      compressed=False, gain_normalize=False,
                      baseline_subtract=False, save_baseline=True,
                      overwrite=False):
+        from mne.time_frequency import tfr_array_morlet
         keyword_out = keyword_in if keyword_out is None else keyword_out
         if gain_normalize and baseline_subtract:
             raise ValueError('Gain normalize and baseline subtract are ' +
@@ -2130,6 +2071,12 @@ class MEEGbuddy:
         # ultradian: N = 6.0 s, deltaN = 0.25 s, deltaf = 1.0 Hz, TW = 3, L = 5
         # microevent: N = 2.5 s, deltaN = 0.05 s, deltaf = 4.0 Hz, TW = 5, L = 9
         #ch = 'EEG072'
+        try:
+            import nitime.algorithms as tsa
+        except:
+            print('Unable to import nitime... you won\'t be able to use this feature')
+        from .psd_multitaper_plot_tools import ButtonClickProcessor
+        from joblib import Parallel, delayed
         raw = self._load_raw(keyword=keyword)
 
         ch_ind = raw.ch_names.index(ch)
@@ -2352,6 +2299,7 @@ class MEEGbuddy:
 
 
     def _CPT(self, data0, data1, threshold, n_permutations=1000, n_jobs=10):
+        from mne.stats import permutation_cluster_test
         if data0.shape != data1.shape:
             raise ValueError('Cluster Permutation size mismatch error')
         if data0.ndim > 4:
@@ -2422,6 +2370,7 @@ class MEEGbuddy:
 
 
     def plotControlVariables(self, conditions=None, show=True):
+        import seaborn as sns
         df = read_csv(self.behavior)
         n = len(df)
         if conditions is None:
@@ -2509,6 +2458,12 @@ class MEEGbuddy:
                        bad_ar_threshold=0.5, n_jobs=10,
                        n_interpolates=[1,2,3,5,7,10,20], random_state=89,
                        consensus_percs=np.linspace(0,1.0,11), overwrite=False):
+        try:
+            from autoreject import AutoReject
+        except:
+            print('Unable to import autoreject... you won\'t be able to use this feature ' +
+                  'unless you install autoreject and its sklearn dependancy')
+        from mne import pick_types
         keyword_out = keyword_in if keyword_out is None else keyword_out
         if self._has_epochs(event, keyword_out) and not overwrite:
            self._overwrite_error('Epochs', event=event, keyword=keyword_out)
@@ -2527,6 +2482,12 @@ class MEEGbuddy:
 
     def plotAutoReject(self, event, keyword_in=None, keyword_out=None,
                        ylim=dict(eeg=(-30,30)), show=True):
+        try:
+            from autoreject import set_matplotlib_defaults
+        except:
+            print('Unable to import autoreject... you won\'t be able to use this feature ' +
+                  'unless you install autoreject and its sklearn dependancy')
+        import matplotlib.patches as patches
         keyword_out = keyword_in if keyword_out is None else keyword_out
         epochs_ar = self._load_epochs(event, keyword=keyword_out)
         epochs_comparison = self._load_epochs(event, keyword=keyword_in)
@@ -2590,6 +2551,7 @@ class MEEGbuddy:
                       keyword_in=None, keyword_out=None, method='dSPM',
                       pick_ori='normal', shared_baseline=False,
                       save_baseline_stc=False, overwrite=False):
+        from mne.minimum_norm import apply_inverse
         if not all([self.fs_subjects_dir, self.bemf, self.srcf, self.transf]):
             raise ValueError('Source estimation parameters not defined, ' +
                              'either add to meta data or redefine MEEGbuddy')
@@ -2651,6 +2613,8 @@ class MEEGbuddy:
 
 
     def _source_setup(self, event, snr, epochs, bl_epochs):
+        from mne.utils import set_config
+        from mne import read_trans, read_bem_solution, make_forward_solution, read_source_spaces
         set_config("SUBJECTS_DIR", self.fs_subjects_dir, set_env=True)
 
         bem = read_bem_solution(self.bemf)
@@ -2682,6 +2646,8 @@ class MEEGbuddy:
 
 
     def _generate_inverse(self, epochs, fwd, bl_epochs, lambda2, method, pick_ori):
+        from mne.minimum_norm import make_inverse_operator
+        from mne import compute_covariance
         noise_cov = compute_covariance(bl_epochs, method="shrunk")
         inv = make_inverse_operator(epochs.info, fwd, noise_cov)
         return inv
@@ -2723,6 +2689,12 @@ class MEEGbuddy:
             combines them all in one animated gif is gif_combine=True. It's okay
             to have other windows over the mlab plots but don't minimize them
             otherwise the image write out will break! '''
+        try:
+            from mayavi import mlab
+        except:
+            print('Unable to import mayavi')
+        from .gif_combine import combine_gifs
+        from mne.minimum_norm import apply_inverse
         values = self._default_values(condition, values=values)
         tmin, tmax = self._default_t(event, tmin, tmax)
         if not use_saved_stc:
@@ -2776,8 +2748,8 @@ class MEEGbuddy:
                 print('Combining gifs for %s' % value)
                 anim = combine_gifs(self._fname('plots','source_plot','gif',
                                                 event, condition, value,
-                                                keyword, hemi,*views),
-                                    fps,*gif_names)
+                                                keyword, hemi, *views),
+                                    fps, *gif_names)
                 if show:
                     plt.show()
             plt.close('all')
@@ -2787,6 +2759,9 @@ class MEEGbuddy:
                             npoint_art=1, offset=0, points=10, k=3):
         #note: points and k not used in mne's interpolation (linear and window)
         #note: linear and window methods interpolate auxillary channels via spline
+        from mne import EpochsArray, pick_types, BaseEpochs
+        from mne.io import RawArray
+        from mne.preprocessing import fix_stim_artifact
         if mode not in ('spline','linear','window'):
             raise ValueError('Mode must be spline/linear/window')
         stim_ch,_,_ = self.events[event]
@@ -2837,6 +2812,7 @@ class MEEGbuddy:
                                 npoint_art=1, offset=0, points=10, k=3, show=True,
                                 ylim=[-5e-4,5e-4], tmin=-0.03, tmax=0.03,
                                 baseline=(-1.1,-0.1)):
+        from mne import Epochs, pick_types
         if mode not in ('spline','linear','window'):
             raise ValueError('Mode must be spline/linear/window')
         interp2, inst, events = \
@@ -2891,6 +2867,7 @@ class MEEGbuddy:
 
 
     def _interpolate(self, this_data, ch_ind, events, npoint_art, offset, points, k):
+        from scipy import interpolate
         for event in events:
             left_edge = event-offset
             right_edge = event+npoint_art-offset
@@ -2909,6 +2886,8 @@ class MEEGbuddy:
 
 
     def applyInterpolation(self, inst, event=None, keyword_out=None, overwrite=False):
+        from mne import BaseEpochs
+        from mne.io import BaseRaw
         if isinstance(inst, BaseEpochs):
             if event is None:
                 raise ValueError('The event of the epochs must be provided.')
@@ -2939,6 +2918,7 @@ class MEEGbuddy:
             self._overwrite_error('Raw', keyword=keyword)
         raw = self._load_raw(keyword=keyword_in)
         if maxwell:
+            from mne.preprocessing import maxwell_filter
             raw = maxwell_filter(raw)
         else:
             raw = raw.filter(l_freq=l_freq, h_freq=h_freq)
@@ -2961,6 +2941,9 @@ class MEEGbuddy:
             a tradeoff between more extreme values and lower snr of source
             estimates. Nboot is better the greater the number but 100 is
             approximately 40 GB with tfr'''
+        from mne.time_frequency.tfr import cwt
+        from mne.minimum_norm import apply_inverse
+        from mne.time_frequency import morlet
         epochs = self._load_epochs(event, keyword=keyword_in)
         bl_epochs = self._load_epochs('Baseline', keyword=keyword_in)
         keyword_out = keyword_in if keyword_out is None else keyword_out
@@ -3120,6 +3103,7 @@ class MEEGbuddy:
             locked to the same event as the source estimate) due to
             normalization issues.
             n_permutations = 1000 takes ~5 hours with tfr'''
+        from scipy.stats import linregress
         keyword_out = keyword_in if keyword_out is None else keyword_out
         fname_in = self._fname('analyses','bootstrap','npz', event,
                                keyword_in)
@@ -3354,6 +3338,12 @@ class MEEGbuddy:
             baseline needs to be related to another event (e.g. the start of a
             stimulus compared to the PCI being relative to the response)
             the recommended solution is longer epochs'''
+        try:
+            from . import pci
+        except:
+            print('Unable to import pci, you won\'t be able to use this analysis')
+        from mne.minimum_norm import apply_inverse
+        from mne import EpochsArray
         if downsample:
             np.random.seed(seed)
         keyword_out = keyword_in if keyword_out is None else keyword_out
@@ -3630,17 +3620,17 @@ class MEEGbuddy:
 
 
     def raw2mat(self, keyword=None, ch=None):
+        from scipy.io import savemat
         raw = self._load_raw(keyword=keyword)
         if ch is None:
             ch_dict = self._get_ch_dict(raw)
         else:
-            ch_dict = {raw.info['ch_names'].index(ch):ch}
+            ch_dict = {raw.info['ch_names'].index(ch): ch}
         raw_data = raw.get_data()
         data_dict = {}
         for ch in ch_dict:
             data_dict[ch_dict[ch]] = raw_data[ch]
-        savemat(self._fname('raw','data','mat', keyword),
-                data_dict)
+        savemat(self._fname('raw','data','mat', keyword), data_dict)
 
 
     def _has_wc(self, event, condition, value, band,
@@ -3693,6 +3683,17 @@ class MEEGbuddy:
                             views=['llat','cau','dor','ven','fro','lfpar',
                                    'rlat','rcpar'],
                             cmap='Reds', overwrite=False):
+        try:
+            from mayavi import mlab
+        except:
+            print('Unable to import mayavi')
+        try:
+            import moviepy.editor as mpy
+        except: 
+            print('Unable to import MoviePy, connectivity animations will not be available')
+        from .gif_combine import combine_gifs
+        from scipy import linalg
+        from mne.connectivity import spectral_connectivity
         if downsample:
             np.random.seed(seed)
         keyword_out = keyword_in if keyword_out is None else keyword_out

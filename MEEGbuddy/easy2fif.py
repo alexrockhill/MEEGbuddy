@@ -7,9 +7,13 @@ import numpy as np
 from pandas import read_csv, DataFrame
 from mne.io import RawArray
 from mne import create_info, Annotations
+from mne.channels import read_montage
 
-channel_conversion = {'0': 'Fp1', '1': 'Fp2', '2': 'F3', '3': 'F4', 
-     				  '4': 'Fz', '5': 'P7', '6': 'P8', '7': 'Oz'}
+channel_conversion = {'Ch1': 'Fp1', 'Ch2': 'Fp2', 'Ch3': 'F3', 'Ch4': 'F4', 
+     				  'Ch5': 'Fz', 'Ch6': 'P7', 'Ch7': 'P8', 'Ch8': 'Oz'}
+
+montage = read_montage('standard_1005', transform=False)
+montage_kind = 'Clincal 8 Channel'
 
 def easy2fif(easyf):
 	infof = op.join(op.dirname(easyf), op.basename(easyf.replace('.easy', '.info')))
@@ -61,13 +65,18 @@ def easy2fif(easyf):
 		arr[:n_channels-1] *= 1e-3
 	else:
 		raise ValueError('Unrecognized EEG unit type %s' % info_dict['EEG units'])
-	ch_names = [str(i) for i in range(int(info_dict['Number of EEG channels']))] + ['Events']
+
+	ch_names2 = [l.split(':')[-1].strip() for l in info_dict['EEG montage'].strip().split('\t')] + ['Events']
+	ch_names = [channel_conversion[ch] if ch in channel_conversion else ch for ch in ch_names2]
 	ch_types = ['eeg' for i in range(int(info_dict['Number of EEG channels']))] + ['stim']
 	sfreq = float(info_dict['EEG sampling rate'].split(' ')[0])
-	info = create_info(ch_names, sfreq, ch_types, verbose=False)
+	montage.kind = montage_kind
+	exclude_indices = [i for i, ch in enumerate(montage.ch_names) if ch not in (ch_names + ['LPA', 'RPA', 'Nz'])]
+	montage.pos = np.delete(montage.pos, exclude_indices, axis=0)
+	montage.ch_names = [ch for ch in montage.ch_names if ch in (ch_names + ['LPA', 'RPA', 'Nz'])]
+	montage.selection = np.arange(len(montage.ch_names))
+	info = create_info(ch_names, sfreq, ch_types, montage=montage, verbose=False)
 	raw = RawArray(arr, info, verbose=False)
-	if all([ch in channel_conversion for ch in raw.ch_names]):
-		raw.rename_channels(channel_conversion)
 	return raw
 	#raw.save(op.join(op.dirname(easyf), op.basename(easyf.replace('.easy', '-raw.fif'))))
 	#raw.set_eeg_reference(ref_channels='average', projection=False)
