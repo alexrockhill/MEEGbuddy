@@ -1,4 +1,4 @@
-*.gif
+MEEGbuddyDemo/data_BIDS
 MEEGbuddy/scratch.py
 MEEGbuddy/__pycache__
 MEEGbuddyDemo/data/*
