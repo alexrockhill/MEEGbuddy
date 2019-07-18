@@ -306,10 +306,11 @@ class MEEGbuddy:
 
 
     def save2BIDS(self, dirname, overwrite=False):
-        from mne_bids import write_raw_bids
+        from mne_bids import write_raw_bids, write_anat
         from pandas import read_csv
         from subprocess import call
         from mne.io import Raw
+        from mne import read_trans
         if not op.isdir(dirname):
             os.makedirs(dirname)
         readmef = op.join(dirname, 'README')
@@ -352,10 +353,12 @@ class MEEGbuddy:
             json.dump(self.behavior_description, f)
         if self.fs_subjects_dir:
             t1f = op.join(self.fs_subjects_dir, self.subject, 'mri', 'T1.mgz')
+            #write_anat(dirname, self.subject, t1f, session=session,
+            #           raw=raw, trans=read_trans(self.transf), overwrite=overwrite)
             anatdir = op.join(dirname, 'sub-%s' % self.subject, 'anat')
             if not op.isdir(anatdir):
                 os.makedirs(anatdir)
-            if 'FREESURFER_HOME' in os.environ:
+            if 'FREESURFER_HOME' not in os.environ:
                 print('Freesurfer not sourced, please do this so T1 can be converted and transfered')
             else:
                 t1_conf = op.join(anatdir, 'sub-%s_T1w.nii.gz' % self.subject)
