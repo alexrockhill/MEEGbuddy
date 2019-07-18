@@ -4066,8 +4066,10 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
     ico2 = spacing.replace('oct','-').replace('ico','-')
     subjects = [d.replace('sub-', '') for d in os.listdir(bids_dir) if op.isdir(op.join(bids_dir, d))]
     for subject in subjects:
-        bids_fnames = glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
-                                        'sub-%s*.fif' % subject))
+        bids_fnames = (glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
+                                        'sub-%s*.fif' % subject)) + 
+                       glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
+                                        'sub-%s*.vhdr' % subject)))
         for bids_fname in bids_fnames:
             raw = read_raw_bids(op.basename(bids_fname), bids_dir)
             if recon:
@@ -4115,7 +4117,7 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
                       '-f %s/%s/bem/watershed/%s_outer_skin_surface' % (fs_subjects_dir, subject, subject)],
                       shell=True, env=os.environ)
                 for area in ['inner_skull', 'outer_skull', 'outer_skin']:
-                    link = op.join(subjects_dir,subject, 'bem', '%s.surf' % area)
+                    link = op.join(fs_subjects_dir, subject, 'bem', '%s.surf' % area)
                     watershed_link = op.join(fs_subjects_dir, subject, 'bem', 'watershed',
                                              '%s_%s_surface' % (subject, area))
                     if op.isfile(link):
@@ -4123,7 +4125,8 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
                     call(['ln -s %s %s' % (watershed_link, link)], shell=True, env=os.environ)
             # BEM
             call(['mne_setup_forward_model --subject %s --surf ' % subject + 
-                  '--ico %i --innershift %i' % (ico, 2 if flash else -1)], shell=True, env=os.environ)
+                  '--ico %i --innershift %i' % (ico, 2 if flash else -1)], 
+                  shell=True, env=os.environ)
             if not op.isfile(op.join(fs_subjects_dir, subject, 'bem',
                              '%s-5120-5120-5120-bem-sol.fif' % subject)):
                 raise ValueError('Forward model failed, likely due to errors in ' + 
