@@ -4018,10 +4018,139 @@ def getMEEGbuddiesBySubject(subjects_dir, meg=None, eeg=None, task=None,
     return data_by_subject
 
 
-def BIDS2MEEGbuddies(bids_dir, output_dir, recon=True):
+def source_fs_and_mne(fs_subjects_dir):
+    if 'FREESURFER_HOME' in os.environ:
+        if fs_subjects_dir is None:
+            raise ValueError('Must specify a directory to put the reconstructions in fs_subjects_dir')
+        if not op.isdir(fs_subjects_dir):
+            os.makedirs(fs_subjects_dir)
+        subjects_dir = fs_subjects_dir
+        os.environ['SUBJECTS_DIR'] = subjects_dir
+        try:
+            call(['source $FREESURFER_HOME/SetUpFreeSurfer.sh'], shell=True,
+                 env=os.environ)
+        except Exception as e:
+            raise Exception('Freesurfer not installed or installed correctly. ' + 
+                            'Make sure $FREESURFER_HOME is defined correctly.' +
+                            'See surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall')
+        try:
+            shell = op.basename(os.environ['SHELL'])
+            if shell == 'bash' or shell == 'tcsh':  # might have to change these only tested for tcsh
+                call(['source $MNE_ROOT/bin/mne_setup_sh'], shell=True, env=os.environ)
+            elif shell == 'csh':
+                call(['source $MNE_ROOT/bin/mne_setup'], shell=True, env=os.environ)
+            else:
+                raise ValueError('Shell not bash or csh or not understood')
+        except:
+            raise Exception('MNE_C not installed or installed correctly. ' +
+                            'Make sure $MNE_ROOT is defined correctly. ' +
+                            'See martinos.org/mne/stable/install_mne_c.html')
+    else:
+        raise Exception('Run freesurfer reconstruction set to True but ' + 
+                        'freesurfer was not sourced. Please source ' +
+                        'freesurfer or set recon to False to continue')
+
+
+def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True, 
+                     ico=4, conductivity=(0.3, 0.006, 0.3), 
+                     spacing='oct6', surface='white', overwrite=False):
     from subprocess import call
     from mne_bids import read_raw_bids
+    if recon:
+        source_fs_and_mne(fs_subjects_dir)
     
+    this_dir = os.getcwd()
+    ico2 = spacing.replace('oct','-').replace('ico','-')
+    subjects = [d.replace('sub-', '') for d in os.listdir(bids_dir) if op.isdir(op.join(bids_dir, d))]
+    for subject in subjects:
+        bids_fnames = glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
+                                        'sub-%s*.fif' % subject))
+        for bids_fname in bids_fnames:
+            raw = read_raw_bids(op.basename(bids_fname), bids_dir)
+            if recon:
+                os.environ['SUBJECT'] = subject
+                t1f = op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_T1w.nii.gz' % subject)
+                if op.isdir(op.join(out_dir, subject, 'mri')) and not overwrite:
+                    print('Recon already run, skipping')
+                else:
+                    if op.isdir(op.join(out_dir, subject, 'mri')):
+                        os.rmdir(op.join(out_dir, subject))
+                    call(['recon-all -subjid %s -i %s -all' % (subject, t1f)], shell=True, env=os.environ)
+            
+            call(['mne_setup_source_space --ico %s --cps --overwrite' % ico2], shell=True, env=os.environ)
+            #Organize flash if supplied
+            flash = op.isfile(op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_FLASH.nii.gz' % subject))
+            if flash:
+                if op.isdir(op.join(fs_subjects_dir, subject, '/flash05')):
+                    os.rmdir(op.join(fs_subjects_dir, subject, '/flash05'))
+                os.makedirs(op.join(fs_subjects_dir, subject, '/flash05'))
+                os.chdir(op.join(fs_subjects_dir, subject, '/flash05'))
+                flash_dir = op.join(bids_dir, 'sub-%s' % subject, 'anat')
+                call(['mne_organize_dicom %s' % flash_dir], shell=True, env=os.environ)
+                new_flash_dir = op.join(fs_subjects_dir, subject, 'flash05', 
+                                        'sub-%s_FLASH_MEFLASH_8e_05deg')  # probably not right
+                call(['ln -s %s flash05' % new_flash_dir], shell=True, env=os.environ)
+                call(['mne_flash_bem --noflash30'], shell=True, env=os.environ)
+                call(['freeview -v %s/%s/mri/T1.mgz ' % (fs_subjects_dir, subject) + 
+                      '-f %s/%s/bem/flash/inner_skull.surf ' % (fs_subjects_dir, subject)+
+                      '-f %s/%s/bem/flash/outer_skull.surf ' % (fs_subjects_dir, subject)+
+                      '-f %s/%s/bem/flash/outer_skin.surf' % (fs_subjects_dir, subject)],
+                      shell=True, env=os.environ)
+                for area in ['inner_skull', 'outer_skull', 'outer_skin']:
+                    link = op.join(fs_subjects_dir, subject, 'bem','%s.surf' % area)
+                    flash_link = op.join(fs_subjects_dir, subject, 'bem', 'flash',
+                                             '%s_%s_surface' % (subject, area))
+                    if op.isfile(link):
+                        os.remove(link)
+                    call(['ln -s %s %s' %(flash_link, link)], shell=True, env=os.environ)
+            else:
+                call(['mne_watershed_bem --subject %s --atlas --overwrite' % subject], shell=True, 
+                     env=os.environ)
+                call(['freeview -v %s/%s/mri/T1.mgz ' % (fs_subjects_dir, subject) + 
+                      '-f %s/%s/bem/watershed/%s_inner_skull_surface ' % (fs_subjects_dir, subject, subject) +
+                      '-f %s/%s/bem/watershed/%s_outer_skull_surface ' % (fs_subjects_dir, subject, subject)+ 
+                      '-f %s/%s/bem/watershed/%s_outer_skin_surface' % (fs_subjects_dir, subject, subject)],
+                      shell=True, env=os.environ)
+                for area in ['inner_skull', 'outer_skull', 'outer_skin']:
+                    link = op.join(subjects_dir,subject, 'bem', '%s.surf' % area)
+                    watershed_link = op.join(fs_subjects_dir, subject, 'bem', 'watershed',
+                                             '%s_%s_surface' % (subject, area))
+                    if op.isfile(link):
+                        os.remove(link)
+                    call(['ln -s %s %s' % (watershed_link, link)], shell=True, env=os.environ)
+            # BEM
+            call(['mne_setup_forward_model --subject %s --surf ' % subject + 
+                  '--ico %i --innershift %i' % (ico, 2 if flash else -1)], shell=True, env=os.environ)
+            if not op.isfile(op.join(fs_subjects_dir, subject, 'bem',
+                             '%s-5120-5120-5120-bem-sol.fif' % subject)):
+                raise ValueError('Forward model failed, likely due to errors in ' + 
+                                 'freesurfer reconstruction and segementation. ' + 
+                                 'See https://github.com/ezemikulan/blender_freesurfer ' +
+                                 'for a workaround, functions from ' + 
+                                 'https://github.com/andersonwinkler/toolbox are needed too')
+            os.chdir(fs_subjects_dir)
 
+            # make head model
+            call(['mkheadsurf -subjid %s' % subject], shell=True, env=os.environ)
+            os.chdir(op.join(subjects_dir,subject,'bem'))
+            call(['mne_surf2bem --surf %s/surf/lh.seghead ' % op.join(fs_subjects_dir, subject) +
+                  '--id 4 --force --fif %s-head.fif'  % subject], shell=True, env=os.environ)
+            os.chdir(subjects_dir)
 
+            call(['mne_setup_mri'], shell=True, env=os.environ)
+            print('Coregistration','In this next interactive GUI, will need to\n' +
+                  '1. Load the pial surface file -> Load Surface -> Select Pial Surface\n' +
+                  '2. Load the subject\'s digitization data: File -> Load digitizer data ->' +
+                  ' Select the raw data file for this session\n' + 
+                  '3. Open the coordinate alignment window: Adjust -> Coordinate Alignment\n' + 
+                  '4. Open the viewer window: View -> Show viewer\n' +
+                  '5. In the coordinate alignment window, click RAP, LAP and Naision, ' + 
+                  'and then after clicking each of those click on the corresponing ' +
+                  'fiducial points on the reconstructed head model\n' +
+                  '6. Click align using fiducials\n' +
+                  '7. In the View window: select Options -> Show digitizer data\n'
+                  '8. Adjust the x, y and z coordinates and rotation until ' +
+                  'the alignment is as close to the ground truth as possible.')
+            call(['mne_analyze'], shell=True, env=os.environ)
+            os.chdir(this_dir)
 
