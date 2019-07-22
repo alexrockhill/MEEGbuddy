@@ -367,8 +367,10 @@ class MEEGbuddy:
             json.dump(self.behavior_description, f)
         if self.fs_subjects_dir:
             t1f = op.join(self.fs_subjects_dir, self.subject, 'mri', 'T1.mgz')
-            #write_anat(dirname, self.subject, t1f, session=session,
-            #           raw=raw, trans=read_trans(self.transf), overwrite=overwrite)
+            '''write_anat(dirname, self.subject, t1f, session=session,
+                       raw=raw, trans=read_trans(self.transf), overwrite=overwrite)
+            '''
+            source_fs_and_mne(self.fs_subjects_dir)
             anatdir = op.join(dirname, 'sub-%s' % self.subject, 'anat')
             if not op.isdir(anatdir):
                 os.makedirs(anatdir)
@@ -4064,11 +4066,11 @@ def source_fs_and_mne(fs_subjects_dir):
                             'Make sure $MNE_ROOT is defined correctly. ' +
                             'See martinos.org/mne/stable/install_mne_c.html')
     else:
-        raise Exception('Run freesurfer reconstruction set to True but ' + 
-                        'freesurfer was not sourced. Please source ' +
-                        'freesurfer or set recon to False to continue')
+        raise Exception('Feesurfer was not sourced. Please source ' +
+                        'freesurfer to continue')
 
 def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite):
+    from subprocess import call
     os.environ['SUBJECT'] = subject
     t1f = op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_T1w.nii.gz' % subject)
     if op.isdir(op.join(out_dir, subject, 'mri')) and not overwrite:
@@ -4201,7 +4203,6 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
                                  'dataset_description.json file. Please edit this to' +
                                  'include this information to continue')
             task_triggers = description[params['task']]
-            df2 = read_csv(channels_fname, sep='\t')
             fdata = op.join(out_dir, subject, op.basename(bids_fname))
             if not op.isdir(op.dirname(fdata)):
                 os.makedirs(op.dirname(fdata))

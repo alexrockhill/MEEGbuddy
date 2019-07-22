@@ -180,14 +180,6 @@ def bv2fif(dataf, corf, ch_order=None, aux=('VEOG', 'HEOG', 'ECG', 'EMG'),
     channels while using memory mapping. A script to circumvent 
     this also exists.
     """
-    if corf is None:
-        montage = None
-    elif '.bvct' in op.basename(corf):
-        montage = read_dig_montage(bvct=corf)
-    elif '.csv' in op.basename(corf):
-        montage = read_dig_montage(csv=corf, transform=False)  # no fiducials in Localite, can't transform
-    else:
-        raise ValueError('corf not understood')
     use_find_events = ((dbs and use_find_events == 'dbs') or 
                        (isinstance(use_find_events, bool) and 
                         use_find_events))
@@ -195,6 +187,14 @@ def bv2fif(dataf, corf, ch_order=None, aux=('VEOG', 'HEOG', 'ECG', 'EMG'),
         preload = os.path.dirname(dataf) + '/workfile'
     #
     raw = read_raw_brainvision(dataf, preload=preload)
+    if corf is None:
+        montage = None
+    elif '.bvct' in op.basename(corf):
+        montage = read_dig_montage(bvct=corf)
+    elif '.csv' in op.basename(corf):
+        montage = read_dig_montage(csv=corf)
+    else:
+        raise ValueError('corf not understood')
     #
     if ch_order is None:
         if all([ch in ch_name_order for ch in raw.ch_names]):
@@ -283,5 +283,5 @@ if __name__  == '__main__':
     if len(sys.argv) != 3:
         raise ValueError('Please provide the .vhdr and the .bvct or .csv files')
 
-    _,dataf,corf = sys.argv
+    _, dataf, corf = sys.argv
     bv2fif(dataf,corf)
