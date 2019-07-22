@@ -4173,8 +4173,10 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
     subjects = [sub.replace('sub-', '') for sub in df['participant_id']]
     MEEGbuddies = []
     for subject in subjects:
-        bids_fnames = glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
-                                        'sub-%s*.fif' % subject))
+        bids_fnames = (glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
+                                        'sub-%s*.fif' % subject)) + 
+                       glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
+                                        'sub-%s*.vhdr' % subject)))
         for bids_fname in bids_fnames:
             raw = read_raw_bids(op.basename(bids_fname), bids_dir)
             params = _parse_bids_filename(op.basename(bids_fname), True)
@@ -4220,5 +4222,5 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
                                          no_response=no_response,
                                          fs_subjects_dir=fs_subjects_dir, 
                                          behavior_description=behavior_description))
-return MEEGbuddies
+    return MEEGbuddies
 
