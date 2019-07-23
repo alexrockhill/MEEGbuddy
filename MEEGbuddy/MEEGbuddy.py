@@ -4069,7 +4069,8 @@ def source_fs_and_mne(fs_subjects_dir):
         raise Exception('Feesurfer was not sourced. Please source ' +
                         'freesurfer to continue')
 
-def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite):
+def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
+                  ico, ico2, conductivity, spacing, surface):
     from subprocess import call
     os.environ['SUBJECT'] = subject
     t1f = op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_T1w.nii.gz' % subject)
@@ -4208,7 +4209,8 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
                 os.makedirs(op.dirname(fdata))
             raw.save(fdata, verbose=False, overwrite=True)
             if recon:
-                recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite)
+                recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
+                              ico, ico2, conductivity, spacing, surface)
             meg = pick_types(raw.info, meg=True, eeg=False).size > 0
             eeg = pick_types(raw.info, meg=False, eeg=True).size > 0 
             ecog = pick_types(raw.info, meg=False, ecog=True).size > 0 
