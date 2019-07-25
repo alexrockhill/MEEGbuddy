@@ -1227,23 +1227,26 @@ class MEEGbuddy:
             n_events = self._make_epochs(raw, event, ch, tmin, tmax, detrend,
                                          keyword_out, n_events=n_events)
             if normalized:
-                self._normalize_epochs(event, keyword_out, baseline_arr)
+                self._normalize_epochs(event, keyword_out, baseline_arr, n_events)
 
-        for response in self.responses:
-            ch, tmin, tmax = self.responses[response]
-            self._make_epochs(raw, response, ch, tmin, tmax, detrend, keyword_out,
+        for event in self.responses:
+            ch, tmin, tmax = self.responses[event]
+            self._make_epochs(raw, event, ch, tmin, tmax, detrend, keyword_out,
                               n_events=n_events, response=True)
             if normalized:
-                self._normalize_epochs(event, keyword_out, baseline_arr, response=True)
+                self._normalize_epochs(event, keyword_out, baseline_arr, n_events,
+                                       response=True)
 
 
-    def _normalize_epochs(self, event, keyword, baseline_arr, response=False):
+    def _normalize_epochs(self, event, keyword, baseline_arr, n_events, response=False):
         from mne import EpochsArray
         print('Normalizing epochs based on baseline')
         epochs = self._load_epochs(event, keyword=keyword)
         epochs_data = epochs.get_data()
         if response:
-            baseline_arr = np.delete(baseline_arr, self.no_response[event], axis=0)
+            response_events = np.setdiff1d(np.arange(n_events), self.no_response[event])
+            include = np.setdiff1d(response_events, self.exclude_trials)
+            baseline_arr = baseline_arr[include]
         epochs_demeaned_data = np.array([arr - baseline_arr.T
                                          for arr in epochs_data.T]).T
         epochs = EpochsArray(epochs_demeaned_data, epochs.info,
@@ -1282,9 +1285,9 @@ class MEEGbuddy:
         n_events2 = len(events)
         print('%s events found: %i' % (event, n_events2))
         if response:
-            response_events = np.setdiff1d(np.arange(n_events), self.no_response[response])
-            exclude = np.intersect1d(response_events, self.exclude_trials)
-            if n_events is not None and n_events2 + len(self.no_response[response]) != n_events:
+            response_events = np.setdiff1d(np.arange(n_events), self.no_response[event])
+            exclude = [i for i, e in enumerate(response_events) if e in self.exclude_trials]
+            if n_events is not None and n_events2 + len(self.no_response[event]) != n_events:
                 raise ValueError('%i events compared to ' % n_events +
                                  '%i responses + %i excluded responses ' % (n_events2, diff) +
                                  'doesn\'t add up')
