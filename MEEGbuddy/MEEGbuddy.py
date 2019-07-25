@@ -5,7 +5,7 @@ try:
     import glob, re, json
     import numpy as np
     from tqdm import tqdm
-    from pandas import read_csv, DataFrame
+    from pandas import read_csv, DataFrame, isnull
 except:
     raise ImportError('Unable to import core tools (pandas, glob, re, json, ' +
                       'tqdm)... must install to continue')
@@ -28,7 +28,7 @@ class MEEGbuddy:
                  behavior=None, behavior_description=None, baseline=None, 
                  stimuli=None, eeg=False, meg=False, ecog=False, seeg=False, 
                  response=None, task=None, no_response=None,
-                 exclude_response=None, tbuffer=1, subjects_dir=None,
+                 exclude_trials=None, tbuffer=1, subjects_dir=None,
                  epochs=None, event=None, fs_subjects_dir=None, bemf=None,
                  srcf=None, transf=None, preload=True, seed=551832, file=None):
         '''
@@ -44,13 +44,17 @@ class MEEGbuddy:
             a csv file with variable names indexing a list of attributes
         behavior_description : dict 
             dictionary desribing the behavior attributes
-        baseline : list [channel (str), start (float), stop(float)]|
-                       [(channel (str), event_id (int)), start (float), stop(float)]
-                  a list of stim channel or stim channel and height of the trigger
-                  and start and stop times for the baseline.
-        stimuli : dict 
-                A dictionary of the names of the stimuli paired with a list of
-                channel, start and stop as descibed in baseline
+                A 'Trial' column is required
+                    If a 'Baseline' key is present, the epochs will be baselined using
+                        epochs from 'Channel', Time Min' and 'Time Max' which are required as sub-keys
+                    Events should be included under 'Events' with a key for each event
+                        Each event should have a value with a dictionary with 
+                        'Channel', Time Min' and 'Time Max'
+                    Responses should be included under 'Responses' the same as 'Stimuli' but
+                        with a 'No Response' sub-sub-key for each type of 'Response' sub-key
+                    Trials to be excluded should be in 'Exclude Trials'
+                All other columns can be used to condition data such as comparing epochs 
+                    'Stimulus Type'
         eeg : bool
             whether eeg data is present
         meg : bool
@@ -59,12 +63,6 @@ class MEEGbuddy:
             whether ecog data is present
         seeg : bool
             whether seeg data is present
-        response : list
-            a channel, start and stop list described in baseline
-        no_response : list of int 
-            indices of behavior to exclude due to no response
-        exclude_response : list of int
-            indices of behavior to exclude (no response not necessary)
         t_buffer : int
             amount of time to buffer epochs for time frequency analyses
         subjects_dir : str
@@ -96,13 +94,7 @@ class MEEGbuddy:
 
             meta_data['Subjects Directory'] = subjects_dir
 
-            name = str(subject) + '_'
-            name += str(session) + '_' if session is not None else ''
-            name += str(run) + '_' if run is not None else ''
-            name += str(task) + '_' if task is not None else ''
-            for dt, v in {'meg': meg, 'eeg': eeg, 'ecog': ecog, 'seeg': seeg}.items():
-                if v:
-                    name += dt
+            name = get_bids_basename(subject, session, run, task, meg, eeg, ecog, seeg)
             file = op.join(subjects_dir, 'meta_data', name + '.json')
             if not op.isdir(os.path.dirname(file)):
                 os.makedirs(os.path.dirname(file))
@@ -136,48 +128,47 @@ class MEEGbuddy:
                 meta_data['Process Directories'][process] = \
                     op.join(subjects_dir, process)
 
-            if behavior is None:
-                behavior = op.join(meta_data['Process Directories']['behavior'], subject)
-                if session is not None:
-                    behavior = op.join(behavior, session)
-                if run is not None:
-                    behavior = op.join(behavior, run)
-                behavior = op.join(behavior, name + '.csv')
-            else:
-                try:
-                    df = read_csv(behavior)
-                except:
-                    raise ValueError('Behavior must be the path to a csv file')
-                if behavior_description is None:
-                    behavior_description = {col: 'Please describe column here' for col in df.columns}
-                else:
-                    if not all([des in list(df.columns) for des in behavior_description]):
-                        raise ValueError('All behavior columns are not described in ' +
-                                         'behavior description dictionary')
-            
+            try:
+                df = read_csv(behavior)
+            except:
+                raise ValueError('Behavior must be the path to a csv file')
+            if not 'Trial' in df.columns:
+                raise ValueError('A trial column is needed in the behavior file. ' + 
+                                 'MEEGbuddy is for trial-based experiments, ' + 
+                                 'if this does not describe your analysis you ' +
+                                 'may well be better off with another tool')
+            if not all([des in list(df.columns) for des in behavior_description]):
+                raise ValueError('All behavior columns are not described in ' +
+                                 'behavior description dictionary')
+
             meta_data['Behavior'] = behavior
             meta_data['Behavior Description'] = behavior_description
 
-            meta_data['No Response'] = \
-                [] if no_response is None else no_response
+            meta_data['No Response'] = {
+                resp: behavior_description['Trial']['Responses'][resp]['No Response']
+                for resp in behavior_description['Trial']['Responses']
+            }
 
-            meta_data['Exclude Response'] = \
-                [] if exclude_response is None else exclude_response
+            meta_data['Exclude Trials'] = \
+                (behavior_description['Trial']['Exclude Trials'] if 
+                 'Exclude Trials' in behavior_description['Trial'] else [])
 
-            meta_data['Events'] = stimuli
-            if any([len(stimuli[event]) != 3 for event in stimuli]):
-                raise ValueError('There must be a channel, start and stop time for each stimulus.')
-
-            if response:
-                if len(response) != 3:
-                    raise ValueError('response must contain a channel, start time and stop time.')
-            meta_data['Response'] = response
-
-            if not baseline or len(baseline) != 3:
-                print('Baseline must contain a channel, start time and stop time. ' +
-                      'Okay to continue, use normalized=False when making epochs')
+            meta_data['Events'] = {
+                stim: [behavior_description['Trial']['Events'][stim]['Channel'],
+                       behavior_description['Trial']['Events'][stim]['Time Min'],
+                       behavior_description['Trial']['Events'][stim]['Time Max']]
+                for stim in behavior_description['Trial']['Events']}
             
-            meta_data['Baseline'] = baseline
+            meta_data['Responses'] = {
+                response: [behavior_description['Trial']['Responses'][response]['Channel'],
+                           behavior_description['Trial']['Responses'][response]['Time Min'],
+                           behavior_description['Trial']['Responses'][response]['Time Max']]
+                for response in behavior_description['Trial']['Responses']}
+            
+            meta_data['Baseline'] = \
+                [behavior_description['Trial']['Baseline']['Channel'],
+                 behavior_description['Trial']['Baseline']['Time Min'],
+                 behavior_description['Trial']['Baseline']['Time Max']]
             meta_data['Time Buffer'] = tbuffer
             meta_data['Preload'] = preload
             meta_data['Seed'] = seed
@@ -232,14 +223,14 @@ class MEEGbuddy:
             self.behavior_description = meta_data['Behavior Description']
             self.baseline = meta_data['Baseline']
             self.events = meta_data['Events']
-            self.response = meta_data['Response']
+            self.responses = meta_data['Responses']
             self.eeg = meta_data['EEG']
             self.meg = meta_data['MEG']
             self.ecog = meta_data['ECOG']
             self.seeg = meta_data['SEEG']
             self.task = meta_data['Task']
             self.no_response = meta_data['No Response']
-            self.exclude_response = meta_data['Exclude Response']
+            self.exclude_trials = meta_data['Exclude Trials']
             self.tbuffer = meta_data['Time Buffer']
             self.process_dirs = meta_data['Process Directories']
             self.subjects_dir = meta_data['Subjects Directory']
@@ -250,6 +241,17 @@ class MEEGbuddy:
             self.preload = meta_data['Preload']
             self.seed = meta_data['Seed']
             self.file = file
+
+        behf = self._fname('behavior', 'beh', 'csv')  # save behavior somewhere original beh won't be overwritten
+        df = read_csv(self.behavior)
+        if op.isfile(behf):
+            df2 = read_csv(behf)
+            if (len(df) != len(df2) or len(df.columns) != len(df2.columns) or
+                any(df.columns != df2.columns) or not
+                all([isnull(df.loc[i, col]) or df.loc[i, col] == df2.loc[i, col]
+                     for i in df.index for col in df.columns])):
+                print('Warning overwriting previous behavior file')
+        df.to_csv(behf, index=False)
 
         if epochs is not None and event is not None:
             epochs.save(self._fname('epochs', 'epo', 'fif', event))
@@ -338,48 +340,49 @@ class MEEGbuddy:
             modality = 'seeg'
         else:
             raise ValueError('Modality error')
-        bids_basename = 'sub-%s_ses-%s_task-%s_run-%s' % (self.subject, session, self.task, run)
+        bids_basename = ('sub-%s_ses-%s_task-%s_run-%s' 
+                         % (self.subject, session, self.task, run))
         write_raw_bids(raw, bids_basename, output_path=dirname, overwrite=overwrite)
-        with open(op.join(dirname, 'dataset_description.json'), 'r+') as f:
-            description = json.load(f)
-            f.seek(0)
-            if self.task in description:
-                if not all([description[self.task]['Stimuli'] == self.events and
-                            description[self.task]['Response'] == self.response and
-                            description[self.task]['Baseline'] == self.baseline]):
-                    raise ValueError('Task triggers mismatch with previous triggers')
-            else:
-                description[self.task] = {}
-                description[self.task]['Stimuli'] = self.events
-                description[self.task]['Response'] = self.response
-                description[self.task]['Baseline'] = self.baseline
-            json.dump(description, f)
-        eventsf = op.join(dirname, 'sub-%s' % self.subject, 'ses-%s' % session, 
-                          modality, bids_basename + '_events.tsv')
-        df = read_csv(eventsf, sep='\t')
-        df2 = read_csv(self.behavior)
-        df = df.join(df2)
-        df.to_csv(eventsf, sep='\t', index=False, na_rep='n/a')
-        behavior_descriptionf = op.join(dirname, 'task-%s_events.json' % self.task)
-        if op.isfile(behavior_descriptionf):
-            os.remove(behavior_descriptionf)
-        with open(behavior_descriptionf, 'w') as f:
-            json.dump(self.behavior_description, f)
+        behf = op.join(dirname, 'sub-%s' % self.subject, 'ses-%s' % session, 
+                       'beh', bids_basename + '_beh.tsv')
+        if not op.isdir(op.dirname(behf)):
+            os.makedirs(op.dirname(behf))
+        df = read_csv(self.behavior)
+        df.to_csv(behf, sep='\t', index=False, na_rep='n/a')
+        behavior_descriptionf = op.join(dirname, 'task-%s_beh.json' % self.task)
+        self._check_and_save_shared_metadata(behavior_descriptionf, self.behavior_description)
         if self.fs_subjects_dir:
             t1f = op.join(self.fs_subjects_dir, self.subject, 'mri', 'T1.mgz')
-            '''write_anat(dirname, self.subject, t1f, session=session,
+            write_anat(dirname, self.subject, t1f, session=session,
                        raw=raw, trans=read_trans(self.transf), overwrite=overwrite)
-            '''
-            source_fs_and_mne(self.fs_subjects_dir)
-            anatdir = op.join(dirname, 'sub-%s' % self.subject, 'anat')
-            if not op.isdir(anatdir):
-                os.makedirs(anatdir)
-            if 'FREESURFER_HOME' not in os.environ:
-                print('Freesurfer not sourced, please do this so T1 can be converted and transfered')
-            else:
-                t1_conf = op.join(anatdir, 'sub-%s_T1w.nii.gz' % self.subject)
-                if not op.isfile(t1_conf):
-                    call(['mri_convert %s %s' % (t1f, t1_conf)], shell=True, env=os.environ)
+
+
+    def _check_and_save_shared_metadata(self, fname, meta_data):
+        if op.isfile(fname):
+            with open(fname, 'r') as f:
+                meta_data2 = json.load(f)
+                if not self._check_dict_equal(meta_data, meta_data2):
+                    if not self._check_dict_in_dict(meta_data, meta_data2):
+                        raise ValueError('Mismatching information for %s ' % fname + 
+                                         'information provided does not match ' +
+                                         'previous information already saved.')
+        else:
+            with open(fname, 'w') as f:
+                json.dump(meta_data, f)
+
+    def _check_dict_equal(dict0, dict1):
+        return (self._check_dict_in_dict(dict0, dict1) and
+                self._check_dict_in_dict(dict1, dict0))
+
+
+    def _check_dict_in_dict(self, dict0, dict1):
+        for k, i in dict0.items():
+            if k not in dict1:
+                return False
+            if isinstance(i, dict):
+                if not self._check_dict_equal(i, dict1[k]):
+                    return False
+        return True
 
 
     def _has_raw(self, keyword=None):
@@ -778,7 +781,7 @@ class MEEGbuddy:
             self.markAutoReject(event)
 
     def getEvents(self, baseline=True):
-        return (list(self.events.keys()) + ['Response']*(self.response is not None) +
+        return (list(self.events.keys()) + list(self.responses.keys()) +
                 ['Baseline']*(self.baseline is not None and baseline))
 
     def _default_aux(self, inst, eogs=None, ecgs=None):
@@ -1201,7 +1204,6 @@ class MEEGbuddy:
 
     def makeEpochs(self, keyword_in=None, keyword_out=None, detrend=0,
                    normalized=True, overwrite=False):
-        from mne import EpochsArray
         keyword_out = keyword_in if keyword_out is None else keyword_out
         if (all([self._has_epochs(event, keyword_out) for event in self.getEvents()])
             and not overwrite):
@@ -1225,17 +1227,30 @@ class MEEGbuddy:
             n_events = self._make_epochs(raw, event, ch, tmin, tmax, detrend,
                                          keyword_out, n_events=n_events)
             if normalized:
-                epochs = self._load_epochs(event, keyword=keyword_out)
-                epochs_data = epochs.get_data()
-                epochs_demeaned_data = np.array([arr - baseline_arr.T
-                                                 for arr in epochs_data.T]).T
-                epochs = EpochsArray(epochs_demeaned_data, epochs.info,
-                                     events=epochs.events, verbose=False,
-                                     proj=False, tmin=tmin-self.tbuffer)
-        if self.response:
-            ch, tmin, tmax = self.response
-            self._make_epochs(raw, 'Response', ch, tmin, tmax, detrend, keyword_out,
+                self._normalize_epochs(event, keyword_out, baseline_arr)
+
+        for response in self.responses:
+            ch, tmin, tmax = self.responses[response]
+            self._make_epochs(raw, response, ch, tmin, tmax, detrend, keyword_out,
                               n_events=n_events, response=True)
+            if normalized:
+                self._normalize_epochs(event, keyword_out, baseline_arr, response=True)
+
+
+    def _normalize_epochs(self, event, keyword, baseline_arr, response=False):
+        from mne import EpochsArray
+        print('Normalizing epochs based on baseline')
+        epochs = self._load_epochs(event, keyword=keyword)
+        epochs_data = epochs.get_data()
+        if response:
+            baseline_arr = np.delete(baseline_arr, self.no_response[event], axis=0)
+        epochs_demeaned_data = np.array([arr - baseline_arr.T
+                                         for arr in epochs_data.T]).T
+        epochs = EpochsArray(epochs_demeaned_data, epochs.info,
+                             events=epochs.events, verbose=False,
+                             proj=False, tmin=epochs.tmin)
+        self._save_epochs(epochs, event, keyword=keyword)
+
 
     def _find_events(self, raw, ch): #backward compatible
         from mne import find_events, events_from_annotations
@@ -1247,13 +1262,14 @@ class MEEGbuddy:
             events = find_events(raw, stim_channel=ch, output="onset", verbose=False)
             if event_id is not None:
                 events = events[np.where(events[:, 2]==event_id)[0]]
-        except:
+        except ValueError as e:
             events, event_id2 = events_from_annotations(raw)
             if event_id is None:
                 events = events[np.where(events[:, 2]==event_id2[ch])[0]]
             else:
                 events = events[np.where(events[:, 2]==event_id)[0]]
         return events
+
 
     def _make_epochs(self, raw, event, ch, tmin, tmax, detrend, keyword_out, n_events=None,
                      response=False):
@@ -1266,15 +1282,15 @@ class MEEGbuddy:
         n_events2 = len(events)
         print('%s events found: %i' % (event, n_events2))
         if response:
-            response_events = np.setdiff1d(np.arange(n_events), self.no_response)
-            exclude = np.intersect1d(response_events, self.exclude_response)
-            if n_events is not None and n_events2 + len(self.no_response) != n_events:
+            response_events = np.setdiff1d(np.arange(n_events), self.no_response[response])
+            exclude = np.intersect1d(response_events, self.exclude_trials)
+            if n_events is not None and n_events2 + len(self.no_response[response]) != n_events:
                 raise ValueError('%i events compared to ' % n_events +
                                  '%i responses + %i excluded responses ' % (n_events2, diff) +
                                  'doesn\'t add up')
             events[:, 2] = response_events
         else:
-            exclude = self.exclude_response
+            exclude = self.exclude_trials
             if n_events is not None and n_events2 != n_events:
                 raise ValueError('%i events from previous stimuli, ' % n_events +
                                  '%i events from %s' % (n_events2, event))
@@ -1282,7 +1298,7 @@ class MEEGbuddy:
         events = np.delete(events, exclude, axis=0)
 
         epochs = Epochs(raw, events, tmin=tmin-self.tbuffer,
-                        tmax=tmax+self.tbuffer, baseline=None, verbose=False,
+                        tmax=tmax + self.tbuffer, baseline=None, verbose=False,
                         detrend=detrend, preload=True)
         if self.eeg:
             epochs = epochs.set_eeg_reference(ref_channels='average',
@@ -1595,12 +1611,14 @@ class MEEGbuddy:
 
 
     def _default_t(self, event, tmin=None, tmax=None, buffered=False):
-        if event == 'Response':
-            _, tmin2, tmax2 = self.response
+        if event in self.responses:
+            _, tmin2, tmax2 = self.response[event]
+        elif event in self.events:
+            _, tmin2, tmax2 = self.events[event]
         elif event == 'Baseline':
             _, tmin2, tmax2 = self.baseline
         else:
-            _, tmin2, tmax2 = self.events[event]
+            raise ValueError('Event %s not recognized' % event)
         if tmin is None:
             tmin = tmin2
         if tmax is None:
@@ -1825,12 +1843,14 @@ class MEEGbuddy:
 
 
     def _get_stim_ch(self, event):
-        if event == 'Response':
-            stim_ch,_,_ = self.response
-        elif event == 'Baseline':
+        if event == 'Baseline':
             stim_ch,_,_ = self.baseline
-        else:
+        elif event in self.events:
             stim_ch,_,_ = self.events[event]
+        elif event in self.responses:
+            stim_ch,_,_ = self.responses[event]
+        else:
+            raise ValueError('Event %s not recognized' % event)
         return stim_ch
 
 
@@ -3992,15 +4012,20 @@ def create_demi_events(raw_fname, window_size, shift, epoches_nun=0,
     return demi_events, demi_conditions
 
 
-def loadMEEGbuddy(subjects_dir, subject, session=None, run=None, task=None,
-                  eeg=False, meg=False, ecog=False, seeg=False):
-    name = str(subject) + '_'
-    name += str(session) + '_' if session is not None else ''
-    name += str(run) + '_' if run is not None else ''
-    name += str(task) + '_' if task is not None else ''
+def get_bids_basename(subject, session, run, task, meg, eeg, ecog, seeg):
+    name = 'sub-%s_' % subject
+    name += 'ses-%s_' % session if session is not None else ''
+    name += 'run-%s_' % run if run is not None else ''
+    name += 'task-%s_' % task if task is not None else ''
     for dt, v in {'meg': meg, 'eeg': eeg, 'ecog': ecog, 'seeg': seeg}.items():
         if v:
             name += dt
+    return name
+
+
+def loadMEEGbuddy(subjects_dir, subject, session=None, run=None, task=None,
+                  eeg=False, meg=False, ecog=False, seeg=False):
+    name = get_bids_basename(subject, session, run, task, meg, eeg, ecog, seeg)
     file = op.join(subjects_dir, 'meta_data', name + '.json')
     if op.isfile(file):
         return MEEGbuddy(file=file)
@@ -4072,15 +4097,16 @@ def source_fs_and_mne(fs_subjects_dir):
 def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
                   ico, ico2, conductivity, spacing, surface):
     from subprocess import call
+    from shutil import copyfile
     os.environ['SUBJECT'] = subject
     t1f = op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_T1w.nii.gz' % subject)
-    if op.isdir(op.join(out_dir, subject, 'mri')) and not overwrite:
+    if op.isdir(op.join(fs_subjects_dir, subject, 'mri')) and not overwrite:
         print('Recon already run, skipping')
     else:
-        if op.isdir(op.join(out_dir, subject, 'mri')):
-            os.rmdir(op.join(out_dir, subject))
+        if op.isdir(op.join(fs_subjects_dir, subject, 'mri')):
+            os.rmdir(op.join(fs_subjects_dir, subject))
         call(['recon-all -subjid %s -i %s -all' % (subject, t1f)], shell=True, env=os.environ)
-
+    #
     call(['mne_setup_source_space --ico %s --cps --overwrite' % ico2], shell=True, env=os.environ)
     #Organize flash if supplied
     flash = op.isfile(op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_FLASH.nii.gz' % subject))
@@ -4100,13 +4126,6 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
               '-f %s/%s/bem/flash/outer_skull.surf ' % (fs_subjects_dir, subject)+
               '-f %s/%s/bem/flash/outer_skin.surf' % (fs_subjects_dir, subject)],
               shell=True, env=os.environ)
-        for area in ['inner_skull', 'outer_skull', 'outer_skin']:
-            link = op.join(fs_subjects_dir, subject, 'bem','%s.surf' % area)
-            flash_link = op.join(fs_subjects_dir, subject, 'bem', 'flash',
-                                     '%s_%s_surface' % (subject, area))
-            if op.isfile(link):
-                os.remove(link)
-            call(['ln -s %s %s' %(flash_link, link)], shell=True, env=os.environ)
     else:
         call(['mne_watershed_bem --subject %s --atlas --overwrite' % subject], shell=True, 
              env=os.environ)
@@ -4115,13 +4134,17 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
               '-f %s/%s/bem/watershed/%s_outer_skull_surface ' % (fs_subjects_dir, subject, subject)+ 
               '-f %s/%s/bem/watershed/%s_outer_skin_surface' % (fs_subjects_dir, subject, subject)],
               shell=True, env=os.environ)
-        for area in ['inner_skull', 'outer_skull', 'outer_skin']:
-            link = op.join(subjects_dir,subject, 'bem', '%s.surf' % area)
-            watershed_link = op.join(fs_subjects_dir, subject, 'bem', 'watershed',
+    for area in ['inner_skull', 'outer_skull', 'outer_skin']:
+        dst = op.join(fs_subjects_dir, subject, 'bem', '%s.surf' % area)
+        if flash:
+            src = op.join(fs_subjects_dir, subject, 'bem', 'flash',
                                      '%s_%s_surface' % (subject, area))
-            if op.isfile(link):
-                os.remove(link)
-            call(['ln -s %s %s' % (watershed_link, link)], shell=True, env=os.environ)
+        else:
+            src = op.join(fs_subjects_dir, subject, 'bem', 'watershed',
+                                     '%s_%s_surface' % (subject, area))
+        if op.isfile(dst):
+            os.remove(dst)
+        copyfile(src, dst)
     # BEM
     call(['mne_setup_forward_model --subject %s --surf ' % subject + 
           '--ico %i --innershift %i' % (ico, 2 if flash else -1)], shell=True, env=os.environ)
@@ -4133,14 +4156,14 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
                          'for a workaround, functions from ' + 
                          'https://github.com/andersonwinkler/toolbox are needed too')
     os.chdir(fs_subjects_dir)
-
+    #
     # make head model
     call(['mkheadsurf -subjid %s' % subject], shell=True, env=os.environ)
-    os.chdir(op.join(subjects_dir,subject,'bem'))
+    os.chdir(op.join(fs_subjects_dir,subject,'bem'))
     call(['mne_surf2bem --surf %s/surf/lh.seghead ' % op.join(fs_subjects_dir, subject) +
           '--id 4 --force --fif %s-head.fif'  % subject], shell=True, env=os.environ)
     os.chdir(subjects_dir)
-
+    #
     call(['mne_setup_mri'], shell=True, env=os.environ)
     print('Coregistration','In this next interactive GUI, will need to\n' +
           '1. Load the pial surface file -> Load Surface -> Select Pial Surface\n' +
@@ -4176,23 +4199,30 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
     subjects = [sub.replace('sub-', '') for sub in df['participant_id']]
     MEEGbuddies = []
     for subject in subjects:
-        bids_fnames = (glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
+        bids_fnames = (glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*',
                                         'sub-%s*.fif' % subject)) + 
-                       glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*', '*',
+                       glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*',
                                         'sub-%s*.vhdr' % subject)))
         for bids_fname in bids_fnames:
             raw = read_raw_bids(op.basename(bids_fname), bids_dir)
             params = _parse_bids_filename(op.basename(bids_fname), True)
-            events_fname = _find_matching_sidecar(op.basename(bids_fname), bids_dir, 'events.tsv',
-                                                  allow_fail=True)
-            df = read_csv(events_fname, sep='\t')
+            behavior = _find_matching_sidecar(op.basename(bids_fname), bids_dir, 'beh.tsv',
+                                              allow_fail=True)
             if op.isfile(op.join(bids_dir, 'task-%s_events.json' % params['task'])):
                 with open(op.join(bids_dir, 'task-%s_events.json' % params['task']), 'r') as f:
                     behavior_description = json.load(f)
             else: 
                 behavior_description = {col: 'Please describe column here' for col in df.columns}
-            no_response = ([i for i, rt in enumerate(df['Response Time']) if np.isnan(rt) or rt == 99]
-                           if 'Response Time' in df else None)
+            if behavior is None:
+                no_response = None
+            else:
+                df = read_csv(behavior, sep='\t')
+                response_columns = [col for col in df.columns if 
+                                    col.lower() in ['response time', 'reaction time', 'rt']]
+                if not response_columns:
+                    raise ValueError('No column of %s ' % behavior)
+                no_response = ([i for i, rt in enumerate(df['Response Time']) if np.isnan(rt) or rt == 99]
+                               if 'Response Time' in df else None)
             descriptionf = op.join(bids_dir, 'dataset_description.json')
             if not op.isfile(descriptionf):
                 raise ValueError('No dataset description file')
@@ -4216,7 +4246,7 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
             ecog = pick_types(raw.info, meg=False, ecog=True).size > 0 
             seeg = pick_types(raw.info, meg=False, seeg=True).size > 0 
             MEEGbuddies.append(MEEGBuddy(subject=subject, session=params['ses'], run=params['run'],
-                                         fdata=fdata, behavior=events_fname, 
+                                         fdata=fdata, behavior=behavior, 
                                          baseline=task_triggers['Baseline'], 
                                          stimuli=task_triggers['Stimuli'],
                                          response=task_triggers['Response'],
