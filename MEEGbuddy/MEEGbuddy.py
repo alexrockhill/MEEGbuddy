@@ -2,12 +2,12 @@ import os
 import os.path as op
 
 try:
-    import glob, re, json
+    import re, json
     import numpy as np
     from tqdm import tqdm
     from pandas import read_csv, DataFrame, isnull
 except:
-    raise ImportError('Unable to import core tools (pandas, glob, re, json, ' +
+    raise ImportError('Unable to import core tools (pandas, re, json, ' +
                       'tqdm)... must install to continue')
 try:
     import matplotlib.pyplot as plt
@@ -4185,6 +4185,34 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
     os.chdir(this_dir)
 
 
+def get_bids_raw_fnames(bids_root):
+    """Scrape a bids directory for raw files of any kind.
+
+    Parameters
+    ----------
+    bids_root : str
+        Path to root of the BIDS folder
+
+    Returns
+    -------
+    fnames : list
+        The names of any raw files in the BIDS directory.
+
+    """
+    from mne_bids.config import ALLOWED_EXTENSIONS
+    fnames = list()
+    def _parse_bids_dir(this_root, fnames):
+        if op.isfile(this_root):
+            _, ext = op.splitext(op.basename(this_root))
+            if ext in ALLOWED_EXTENSIONS:
+                fnames.append(this_root)
+        elif op.isdir(this_root):
+            for f in os.listdir(this_root):
+                _parse_bids_dir(op.join(this_root, f), fnames)
+    _parse_bids_dir(bids_root, fnames)
+    return fnames
+
+
 def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True, 
                      ico=4, conductivity=(0.3, 0.006, 0.3), 
                      spacing='oct6', surface='white', overwrite=False):
@@ -4211,32 +4239,8 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
             params = _parse_bids_filename(op.basename(bids_fname), True)
             behavior = _find_matching_sidecar(op.basename(bids_fname), bids_dir, 'beh.tsv',
                                               allow_fail=True)
-            if op.isfile(op.join(bids_dir, 'task-%s_events.json' % params['task'])):
-                with open(op.join(bids_dir, 'task-%s_events.json' % params['task']), 'r') as f:
-                    behavior_description = json.load(f)
-            else: 
-                behavior_description = {col: 'Please describe column here' for col in df.columns}
-            if behavior is None:
-                no_response = None
-            else:
-                df = read_csv(behavior, sep='\t')
-                response_columns = [col for col in df.columns if 
-                                    col.lower() in ['response time', 'reaction time', 'rt']]
-                if not response_columns:
-                    raise ValueError('No column of %s ' % behavior)
-                no_response = ([i for i, rt in enumerate(df['Response Time']) if np.isnan(rt) or rt == 99]
-                               if 'Response Time' in df else None)
-            descriptionf = op.join(bids_dir, 'dataset_description.json')
-            if not op.isfile(descriptionf):
-                raise ValueError('No dataset description file')
-            with open(descriptionf, 'r') as f:
-                description = json.load(f)
-            if params['task'] not in description:
-                raise ValueError('The baseline trigger, stimulus triggers and ' +
-                                 'response triggers are not defined in the ' +
-                                 'dataset_description.json file. Please edit this to' +
-                                 'include this information to continue')
-            task_triggers = description[params['task']]
+            behavior_descriptionf = _find_matching_sidecar(op.basename(bids_fname), 
+                                                           bids_dir, 'beh.json', allow_fail=True)
             fdata = op.join(out_dir, subject, op.basename(bids_fname))
             if not op.isdir(op.dirname(fdata)):
                 os.makedirs(op.dirname(fdata))
@@ -4249,13 +4253,9 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
             ecog = pick_types(raw.info, meg=False, ecog=True).size > 0 
             seeg = pick_types(raw.info, meg=False, seeg=True).size > 0 
             MEEGbuddies.append(MEEGBuddy(subject=subject, session=params['ses'], run=params['run'],
-                                         fdata=fdata, behavior=behavior, 
-                                         baseline=task_triggers['Baseline'], 
-                                         stimuli=task_triggers['Stimuli'],
-                                         response=task_triggers['Response'],
+                                         fdata=fdata, behavior=behavior,
                                          task=params['task'], meg=meg, eeg=eeg, ecog=ecog, 
                                          seeg=seeg, subjects_dir=out_dir,
-                                         no_response=no_response,
                                          fs_subjects_dir=fs_subjects_dir, 
                                          behavior_description=behavior_description))
     return MEEGbuddies
