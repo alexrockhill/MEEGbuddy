@@ -2,7 +2,7 @@
 
 I work in a lab that analyzes many psychphysical tasks with the same structure: there are trials with stimuli and responses. If this matches the description of what you're studying, this tool will probably be very helpful. Using MEEGbuddy, I was able to preprocess ~70 subjects for three tasks using both MEG and EEG in three days not counting computation time.
 
-MEEGbuddy uses MNE, autoreject and PCI (noreun on github) for preprocessing mostly but also analysis of MEEG data. TFR psd multitapers, including sleep scoring, and morlet are supported as well as cluster permutation tests and lempel-ziv complexity (connectivity coming soon hopefully). These preprocessing and analysis steps all come with defaults that will run well as is and have lots of the kinks figured out already with the added bonus that they are saved in BIDS structure (or pretty close).
+MEEGbuddy uses MNE, autoreject and PCI (noreun on github) for preprocessing mostly but also analysis of MEEG data. TFR psd multitapers, including sleep scoring, and morlet are supported as well as cluster permutation tests and lempel-ziv complexity amd connectivity. These preprocessing and analysis steps all come with defaults that will run well as is and have lots of the kinks figured out already with the added bonus that they are saved in BIDS structure (or pretty close).
 
 ![alt text](https://raw.githubusercontent.com/alexrockhill/MEEGbuddy/master/MEEGbuddyDemo/data/plots/source_bootstrap/source_bootstrap.jpeg)
 
@@ -17,8 +17,8 @@ First install anaconda (recommended) (https://www.anaconda.com/distribution/#dow
 0. Optional preinstallation for making a virtual environment so you don't break dependancies in other python programs you use
 0a. run "pip install virtualenv --user"
 0b. run "virtualenv /Path/to/where/you/want/to/store/your/venv"
-0c. run "source /Path/to/where/you/want/to/store/your/venv/bin/activate"
-1. run "pip install MEEGbuddy,numpy"
+0c. run "source /Path/to/where/you/want/to/store/your/venv/bin/activate" (if you are in tcsh or csh use activate.csh)
+1. run "pip install MEEGbuddy numpy"
 2. run "pip install -r requirements.txt"
 3. (Optional) Install freesurfer (https://surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall) 
 4. (Optional) Install MNE C (https://martinos.org/mne/stable/install_mne_c.html) (this has command line functions, which, espeically "mne_analyze" have useful GUIs, in that case for coordinate frame coregistration (MRI to MEEG).
