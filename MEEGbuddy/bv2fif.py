@@ -135,7 +135,7 @@ def get_events(raw):
     arr = np.zeros((1, len(raw.times)))
     for i in events:
         arr[0,i:i+100] = 1
-    event_ch = RawArray(arr,info,verbose=False)
+    event_ch = RawArray(arr, info, verbose=False)
     return event_ch
 
 def bv2fif(dataf, corf, ch_order=None, aux=('VEOG', 'HEOG', 'ECG', 'EMG'),
@@ -216,19 +216,6 @@ def bv2fif(dataf, corf, ch_order=None, aux=('VEOG', 'HEOG', 'ECG', 'EMG'),
     #
     prepInst(raw, dataf, 'raw', montage, ref_ch, aux,
              'DBS' if dbs else 'TMS', ch_order)
-    #
-    if len(np.unique(events[:,2])) > 1:
-        events = events[np.where(events[:,2] == events[-1, 2])[0]] #skip new segment
-    epochs = Epochs(raw, events, tmin=tmin, tmax=tmax, proj=False,
-                    preload=preload, baseline=baseline, verbose=False,
-                    detrend=detrend)
-    events = events[epochs.selection]  #in case any epochs don't have data and get thrown out (poorly placed at beginning or end)
-    epochs.event_id = {str(i):i for i in range(len(events))}
-    #
-    prepInst(epochs, dataf, 'epo', montage, ref_ch, aux,
-             'DBS' if dbs else 'TMS', ch_order)
-    if isinstance(preload, str) and op.isfile(preload):
-        os.remove(preload)
 
 
 def prepInst(inst, dataf, suffix, montage, ref_ch, aux, stim, ch_order):

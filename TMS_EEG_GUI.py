@@ -370,7 +370,7 @@ class TMS_EEG_GUI(Frame):
 
         # make head model
         self.output_to_terminal('mkheadsurf -subjid %s' %(subject))
-        os.chdir(op.join(subjects_dir,subject,'bem'))
+        os.chdir(op.join(subjects_dir, subject, 'bem'))
         self.output_to_terminal('mne_surf2bem --surf ' +
                                 '%s/surf/lh.seghead ' %(op.join(subjects_dir,subject)) +
                                 '--id 4 --force --fif %s-head.fif'  %(subject))

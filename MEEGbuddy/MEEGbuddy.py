@@ -353,7 +353,7 @@ class MEEGbuddy:
         self._check_and_save_shared_metadata(behavior_descriptionf, self.behavior_description)
         if self.fs_subjects_dir:
             t1f = op.join(self.fs_subjects_dir, self.subject, 'mri', 'T1.mgz')
-            write_anat(dirname, self.subject, t1f, session=session,
+            write_anat(dirname, self.subject, t1f, session=None,
                        raw=raw, trans=read_trans(self.transf), overwrite=overwrite)
 
 
@@ -4114,15 +4114,9 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
     #Organize flash if supplied
     flash = op.isfile(op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_FLASH.nii.gz' % subject))
     if flash:
-        if op.isdir(op.join(fs_subjects_dir, subject, '/flash05')):
-            os.rmdir(op.join(fs_subjects_dir, subject, '/flash05'))
-        os.makedirs(op.join(fs_subjects_dir, subject, '/flash05'))
-        os.chdir(op.join(fs_subjects_dir, subject, '/flash05'))
-        flash_dir = op.join(bids_dir, 'sub-%s' % subject, 'anat')
-        call(['mne_organize_dicom %s' % flash_dir], shell=True, env=os.environ)
-        new_flash_dir = op.join(fs_subjects_dir, subject, 'flash05', 
-                                'sub-%s_FLASH_MEFLASH_8e_05deg')  # probably not right
-        call(['ln -s %s flash05' % new_flash_dir], shell=True, env=os.environ)
+        if op.isfile(op.join(fs_subjects_dir, subject, 'flash05')):
+            os.remove(op.join(fs_subjects_dir, subject, 'flash05'))
+        call(['ln -s %s flash05' % flash], shell=True, env=os.environ)
         call(['mne_flash_bem --noflash30'], shell=True, env=os.environ)
         call(['freeview -v %s/%s/mri/T1.mgz ' % (fs_subjects_dir, subject) + 
               '-f %s/%s/bem/flash/inner_skull.surf ' % (fs_subjects_dir, subject)+
@@ -4158,14 +4152,11 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
                          'See https://github.com/ezemikulan/blender_freesurfer ' +
                          'for a workaround, functions from ' + 
                          'https://github.com/andersonwinkler/toolbox are needed too')
-    os.chdir(fs_subjects_dir)
-    #
     # make head model
     call(['mkheadsurf -subjid %s' % subject], shell=True, env=os.environ)
-    os.chdir(op.join(fs_subjects_dir,subject,'bem'))
-    call(['mne_surf2bem --surf %s/surf/lh.seghead ' % op.join(fs_subjects_dir, subject) +
-          '--id 4 --force --fif %s-head.fif'  % subject], shell=True, env=os.environ)
-    os.chdir(subjects_dir)
+    call(['mne_surf2bem --surf %s/surf/lh.seghead ' % op.join(fs_subjects_dir, subject) + 
+          '--id 4 --force --fif %s-head.fif' % op.join(fs_subjects_dir, subject, 'bem', subject)],
+         shell=True, env=os.environ)
     #
     call(['mne_setup_mri'], shell=True, env=os.environ)
     print('Coregistration','In this next interactive GUI, will need to\n' +
@@ -4180,9 +4171,10 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
           '6. Click align using fiducials\n' +
           '7. In the View window: select Options -> Show digitizer data\n'
           '8. Adjust the x, y and z coordinates and rotation until ' +
-          'the alignment is as close to the ground truth as possible.')
-    call(['mne_analyze'], shell=True, env=os.environ)
-    os.chdir(this_dir)
+          'the alignment is as close to the ground truth as possible.\n' + 
+          '9. Press \'Save MRI Set\' in the Coordinate Alignment Viewer.\n' +
+          '10. Exit the all the windows.')
+    call(['mne_analyze &'], shell=True, env=os.environ)
 
 
 def get_bids_raw_fnames(bids_root):
@@ -4199,18 +4191,29 @@ def get_bids_raw_fnames(bids_root):
         The names of any raw files in the BIDS directory.
 
     """
-    from mne_bids.config import ALLOWED_EXTENSIONS
+    from mne_bids.config import ALLOWED_EXTENSIONS 
     fnames = list()
     def _parse_bids_dir(this_root, fnames):
         if op.isfile(this_root):
             _, ext = op.splitext(op.basename(this_root))
-            if ext in ALLOWED_EXTENSIONS:
+            if (ext in ALLOWED_EXTENSIONS and 
+                (ext != '.fif' or any([mod in this_root for mod in 
+                                       ['meg.fif', 'eeg.fif', 'ieeg.fif']]))):
                 fnames.append(this_root)
         elif op.isdir(this_root):
             for f in os.listdir(this_root):
                 _parse_bids_dir(op.join(this_root, f), fnames)
     _parse_bids_dir(bids_root, fnames)
     return fnames
+
+
+def find_fs_file(name, fdir, ftype):
+    fs = [f for f in os.listdir(fdir) if ftype in f]
+    if not fs:
+        raise ValueError('No %s file found' % name)
+    elif len(fs) > 1:
+        print('Warning, using the first of %i %s files: %s' % (len(fs), name, fs[0]))
+    return fs[0]
 
 
 def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True, 
@@ -4224,39 +4227,41 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
     if recon:
         source_fs_and_mne(fs_subjects_dir)
         ico2 = spacing.replace('oct', '-').replace('ico', '-')
-    
-    this_dir = os.getcwd()
-    df = read_csv(op.join(bids_dir, 'participants.tsv'), sep='\t')
-    subjects = [sub.replace('sub-', '') for sub in df['participant_id']]
+
     MEEGbuddies = []
-    for subject in subjects:
-        bids_fnames = (glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*',
-                                        'sub-%s*.fif' % subject)) + 
-                       glob.glob(op.join(bids_dir, 'sub-%s' % subject, '*',
-                                        'sub-%s*.vhdr' % subject)))
-        for bids_fname in bids_fnames:
-            raw = read_raw_bids(op.basename(bids_fname), bids_dir)
-            params = _parse_bids_filename(op.basename(bids_fname), True)
-            behavior = _find_matching_sidecar(op.basename(bids_fname), bids_dir, 'beh.tsv',
-                                              allow_fail=True)
-            behavior_descriptionf = _find_matching_sidecar(op.basename(bids_fname), 
-                                                           bids_dir, 'beh.json', allow_fail=True)
-            fdata = op.join(out_dir, subject, op.basename(bids_fname))
-            if not op.isdir(op.dirname(fdata)):
-                os.makedirs(op.dirname(fdata))
-            raw.save(fdata, verbose=False, overwrite=True)
-            if recon:
-                recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
-                              ico, ico2, conductivity, spacing, surface)
-            meg = pick_types(raw.info, meg=True, eeg=False).size > 0
-            eeg = pick_types(raw.info, meg=False, eeg=True).size > 0 
-            ecog = pick_types(raw.info, meg=False, ecog=True).size > 0 
-            seeg = pick_types(raw.info, meg=False, seeg=True).size > 0 
-            MEEGbuddies.append(MEEGBuddy(subject=subject, session=params['ses'], run=params['run'],
-                                         fdata=fdata, behavior=behavior,
-                                         task=params['task'], meg=meg, eeg=eeg, ecog=ecog, 
-                                         seeg=seeg, subjects_dir=out_dir,
-                                         fs_subjects_dir=fs_subjects_dir, 
-                                         behavior_description=behavior_description))
+    bids_fnames = get_bids_raw_fnames(bids_dir)
+    for bids_fname in bids_fnames:
+        raw = read_raw_bids(op.basename(bids_fname), bids_dir)
+        params = _parse_bids_filename(op.basename(bids_fname), True)
+        behavior = _find_matching_sidecar(op.basename(bids_fname), bids_dir, 'beh.tsv',
+                                          allow_fail=True)
+        behavior_descriptionf = op.join(bids_dir, 'task-%s_beh.json' % params['task'])
+        fdata = op.join(out_dir, params['sub'], op.basename(bids_fname))
+        if not op.isdir(op.dirname(fdata)):
+            os.makedirs(op.dirname(fdata))
+        raw.save(fdata, verbose=False, overwrite=True)
+        if recon:
+            recon_subject(params['sub'], bids_dir, out_dir, fs_subjects_dir, overwrite,
+                          ico, ico2, conductivity, spacing, surface)
+        meg = pick_types(raw.info, meg=True, eeg=False).size > 0
+        eeg = pick_types(raw.info, meg=False, eeg=True).size > 0 
+        ecog = pick_types(raw.info, meg=False, ecog=True).size > 0 
+        seeg = pick_types(raw.info, meg=False, seeg=True).size > 0
+        if recon:
+            bemf = find_fs_file('BEM', op.join(fs_subjects_dir, subject, 'bem'), '-bem-sol.fif')
+            srcf = find_fs_file('source', op.join(fs_subjects_dir, subject, 'bem'), 
+                                '%s-src.fif' % ico2)
+            transf = find_fs_file('coordinate transformation', 
+                                  op.join(fs_subjects_dir, subject, 'mri', 'T1-neuromag', 'sets'),
+                                  'trans.fif')
+        else:
+            bemf = srcf = transf = None
+        MEEGbuddies.append(MEEGBuddy(subject=params['sub'], session=params['ses'], 
+                                     run=params['run'], fdata=fdata, behavior=behavior,
+                                     task=params['task'], meg=meg, eeg=eeg, ecog=ecog, 
+                                     seeg=seeg, subjects_dir=out_dir,
+                                     fs_subjects_dir=fs_subjects_dir, 
+                                     bemf=bemf, srcf=srcf, transf=transf,
+                                     behavior_description=behavior_description))
     return MEEGbuddies
 
