@@ -16,8 +16,9 @@ First install anaconda (recommended) (https://www.anaconda.com/distribution/#dow
 
 0. Optional preinstallation for making a virtual environment so you don't break dependancies in other python programs you use
 0a. run "pip install virtualenv --user"
-0b. run "virtualenv /Path/to/where/you/want/to/store/your/venv"
+0b. run "virtualenv /Path/to/where/you/want/to/store/your/venv" (note in this case the name of the virtual environment is venv, you can call it whatever you want but you will need to change the venv to your name in the instructions)
 0c. run "source /Path/to/where/you/want/to/store/your/venv/bin/activate" (if you are in tcsh or csh use activate.csh)
+0d. run "ipython kernel install --user --name=venv" (name this whatever you named your virtual enviroment)
 1. run "pip install MEEGbuddy numpy"
 2. run "pip install -r requirements.txt"
 3. (Optional) Install freesurfer (https://surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall) 
@@ -28,6 +29,7 @@ To run the demo:
 1. install jupyter if you haven't already: run "pip install jupyter"
 2. install dependencies if you haven't already: run "pip install -r requirements.txt" OR run "pip install pandas mne scipy autoreject seaborn matplotlib tqdm joblib nitime pysurfer naturalneighbor mayavi"
 3. run "jupyter notebook"
+4. If you used a virtual environment go to Kernal>Change Enviroments and select your envrironment
 
 Only python3 is supported.
 
