@@ -144,27 +144,33 @@ class MEEGbuddy:
             meta_data['Behavior'] = behavior
             meta_data['Behavior Description'] = behavior_description
 
-            meta_data['No Response'] = {
-                resp: behavior_description['Trial']['Responses'][resp]['No Response']
-                for resp in behavior_description['Trial']['Responses']
-            }
-
             meta_data['Exclude Trials'] = \
                 (behavior_description['Trial']['Exclude Trials'] if 
                  'Exclude Trials' in behavior_description['Trial'] else [])
 
-            meta_data['Events'] = {
-                stim: [behavior_description['Trial']['Events'][stim]['Channel'],
-                       behavior_description['Trial']['Events'][stim]['Time Min'],
-                       behavior_description['Trial']['Events'][stim]['Time Max']]
-                for stim in behavior_description['Trial']['Events']}
-            
-            meta_data['Responses'] = {
-                response: [behavior_description['Trial']['Responses'][response]['Channel'],
-                           behavior_description['Trial']['Responses'][response]['Time Min'],
-                           behavior_description['Trial']['Responses'][response]['Time Max']]
-                for response in behavior_description['Trial']['Responses']}
-            
+            if 'Events' in behavior_description['Trial']:
+                meta_data['Events'] = {
+                    stim: [behavior_description['Trial']['Events'][stim]['Channel'],
+                           behavior_description['Trial']['Events'][stim]['Time Min'],
+                           behavior_description['Trial']['Events'][stim]['Time Max']]
+                    for stim in behavior_description['Trial']['Events']}
+            else:
+                meta_data['Events'] = {}
+
+            if 'Responses' in behavior_description['Trial']:
+                meta_data['Responses'] = {
+                    response: [behavior_description['Trial']['Responses'][response]['Channel'],
+                               behavior_description['Trial']['Responses'][response]['Time Min'],
+                               behavior_description['Trial']['Responses'][response]['Time Max']]
+                    for response in behavior_description['Trial']['Responses']}
+                meta_data['No Response'] = {
+                    resp: behavior_description['Trial']['Responses'][resp]['No Response']
+                    for resp in behavior_description['Trial']['Responses'] if
+                    'No Response' in behavior_description['Trial']['Responses'][resp]
+                }
+            else: 
+                meta_data['Responses'], meta_data['No Response'] = {}, {}
+
             meta_data['Baseline'] = \
                 [behavior_description['Trial']['Baseline']['Channel'],
                  behavior_description['Trial']['Baseline']['Time Min'],
@@ -307,7 +313,7 @@ class MEEGbuddy:
         return op.join(dirname, fname)
 
 
-    def save2BIDS(self, dirname, overwrite=False):
+    def save2BIDS(self, bids_dir, overwrite=False):
         from mne_bids import write_raw_bids, write_anat
         from pandas import read_csv
         from subprocess import call
@@ -342,8 +348,8 @@ class MEEGbuddy:
             raise ValueError('Modality error')
         bids_basename = ('sub-%s_ses-%s_task-%s_run-%s' 
                          % (self.subject, session, self.task, run))
-        write_raw_bids(raw, bids_basename, output_path=dirname, overwrite=overwrite)
-        behf = op.join(dirname, 'sub-%s' % self.subject, 'ses-%s' % session, 
+        write_raw_bids(raw, bids_basename, output_path=bids_dir, overwrite=overwrite)
+        behf = op.join(bids_dir, 'sub-%s' % self.subject, 'ses-%s' % session, 
                        'beh', bids_basename + '_beh.tsv')
         if not op.isdir(op.dirname(behf)):
             os.makedirs(op.dirname(behf))
@@ -4097,10 +4103,9 @@ def source_fs_and_mne(fs_subjects_dir):
         raise Exception('Feesurfer was not sourced. Please source ' +
                         'freesurfer to continue')
 
-def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
-                  ico, ico2, conductivity, spacing, surface):
+
+def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite):
     from subprocess import call
-    from shutil import copyfile
     os.environ['SUBJECT'] = subject
     t1f = op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_T1w.nii.gz' % subject)
     if op.isdir(op.join(fs_subjects_dir, subject, 'mri')) and not overwrite:
@@ -4108,8 +4113,15 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
     else:
         if op.isdir(op.join(fs_subjects_dir, subject, 'mri')):
             os.rmdir(op.join(fs_subjects_dir, subject))
-        call(['recon-all -subjid %s -i %s -all' % (subject, t1f)], shell=True, env=os.environ)
-    #
+        call(['recon-all -subjid %s -i %s -all' % (subject, t1f)], 
+             shell=True, env=os.environ)
+
+
+def setup_source_space(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
+                       ico, ico2, conductivity, spacing, surface):
+    from subprocess import call
+    from shutil import copyfile
+    os.environ['SUBJECT'] = subject
     call(['mne_setup_source_space --ico %s --cps --overwrite' % ico2], shell=True, env=os.environ)
     #Organize flash if supplied
     flash = op.isfile(op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_FLASH.nii.gz' % subject))
@@ -4173,8 +4185,8 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
           '8. Adjust the x, y and z coordinates and rotation until ' +
           'the alignment is as close to the ground truth as possible.\n' + 
           '9. Press \'Save MRI Set\' in the Coordinate Alignment Viewer.\n' +
-          '10. Exit the all the windows.')
-    call(['mne_analyze &'], shell=True, env=os.environ)
+          '10.File>Quit N.B. (The close button in the top right corner does not work!).')
+    call(['mne_analyze'], shell=True, env=os.environ)
 
 
 def get_bids_raw_fnames(bids_root):
@@ -4196,7 +4208,8 @@ def get_bids_raw_fnames(bids_root):
     def _parse_bids_dir(this_root, fnames):
         if op.isfile(this_root):
             _, ext = op.splitext(op.basename(this_root))
-            if (ext in ALLOWED_EXTENSIONS and 
+            if (any([ext in ALLOWED_EXTENSIONS[kind] for
+                     kind in ALLOWED_EXTENSIONS]) and 
                 (ext != '.fif' or any([mod in this_root for mod in 
                                        ['meg.fif', 'eeg.fif', 'ieeg.fif']]))):
                 fnames.append(this_root)
@@ -4216,7 +4229,7 @@ def find_fs_file(name, fdir, ftype):
     return fs[0]
 
 
-def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True, 
+def BIDS2MEEGbuddies(bids_dir, out_dir, recon=True, 
                      ico=4, conductivity=(0.3, 0.006, 0.3), 
                      spacing='oct6', surface='white', overwrite=False):
     from subprocess import call
@@ -4224,35 +4237,46 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
     from mne_bids.utils import _parse_bids_filename, _find_matching_sidecar
     from mne import pick_types
     from pandas import read_csv
-    if recon:
-        source_fs_and_mne(fs_subjects_dir)
-        ico2 = spacing.replace('oct', '-').replace('ico', '-')
 
     MEEGbuddies = []
     bids_fnames = get_bids_raw_fnames(bids_dir)
+    subjects = np.unique([_parse_bids_filename('_'.join(
+        op.basename(bids_fname).split('_')[:-1]), True)['sub']
+                          for bids_fname in bids_fnames])
+    if recon:
+        source_fs_and_mne(out_dir)
+        ico2 = spacing.replace('oct', '-').replace('ico', '-')
+        print('Running reconstructions on subjects, this will take many hours ' + 
+              '~8 per subject depending on your computer configuration')
+        for subject in subjects:  # this is done first because it takes so long
+            recon_subject(subject, bids_dir, out_dir, out_dir, overwrite)
+        print('Setting up the source space. This is automated but will plot for your ' + 
+              'quality check so that changes can be made if needed.')
+        for subject in subjects:
+            setup_source_space(subject, bids_dir, out_dir, out_dir, overwrite,
+                               ico, ico2, conductivity, spacing, surface)
     for bids_fname in bids_fnames:
         raw = read_raw_bids(op.basename(bids_fname), bids_dir)
-        params = _parse_bids_filename(op.basename(bids_fname), True)
-        behavior = _find_matching_sidecar(op.basename(bids_fname), bids_dir, 'beh.tsv',
+        bids_basename = '_'.join(op.basename(bids_fname).split('_')[:-1])
+        params = _parse_bids_filename(bids_basename, True)
+        subject = params['sub']
+        behavior = _find_matching_sidecar(bids_basename, bids_dir, 'beh.tsv',
                                           allow_fail=True)
         behavior_descriptionf = op.join(bids_dir, 'task-%s_beh.json' % params['task'])
-        fdata = op.join(out_dir, params['sub'], op.basename(bids_fname))
+        fdata = op.join(out_dir, subject, op.basename(bids_fname))
         if not op.isdir(op.dirname(fdata)):
             os.makedirs(op.dirname(fdata))
         raw.save(fdata, verbose=False, overwrite=True)
-        if recon:
-            recon_subject(params['sub'], bids_dir, out_dir, fs_subjects_dir, overwrite,
-                          ico, ico2, conductivity, spacing, surface)
         meg = pick_types(raw.info, meg=True, eeg=False).size > 0
         eeg = pick_types(raw.info, meg=False, eeg=True).size > 0 
         ecog = pick_types(raw.info, meg=False, ecog=True).size > 0 
         seeg = pick_types(raw.info, meg=False, seeg=True).size > 0
         if recon:
-            bemf = find_fs_file('BEM', op.join(fs_subjects_dir, subject, 'bem'), '-bem-sol.fif')
-            srcf = find_fs_file('source', op.join(fs_subjects_dir, subject, 'bem'), 
+            bemf = find_fs_file('BEM', op.join(out_dir, subject, 'bem'), '-bem-sol.fif')
+            srcf = find_fs_file('source', op.join(out_dir, subject, 'bem'), 
                                 '%s-src.fif' % ico2)
             transf = find_fs_file('coordinate transformation', 
-                                  op.join(fs_subjects_dir, subject, 'mri', 'T1-neuromag', 'sets'),
+                                  op.join(out_dir, subject, 'mri', 'T1-neuromag', 'sets'),
                                   'trans.fif')
         else:
             bemf = srcf = transf = None
@@ -4260,7 +4284,7 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, fs_subjects_dir=None, recon=True,
                                      run=params['run'], fdata=fdata, behavior=behavior,
                                      task=params['task'], meg=meg, eeg=eeg, ecog=ecog, 
                                      seeg=seeg, subjects_dir=out_dir,
-                                     fs_subjects_dir=fs_subjects_dir, 
+                                     fs_subjects_dir=out_dir, 
                                      bemf=bemf, srcf=srcf, transf=transf,
                                      behavior_description=behavior_description))
     return MEEGbuddies
