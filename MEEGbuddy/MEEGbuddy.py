@@ -191,7 +191,7 @@ class MEEGbuddy:
             meta_data['Freesufer SUBJECTS_DIR'] = fs_subjects_dir
 
             if bemf is None:
-                if not fs_subjects_dir is None:
+                if fs_subjects_dir:
                     print('Please provide the file for a boundary element model if ' +
                           'you want source estimation, this can be done using a ' +
                           'FLASH or T1 scan using MNE make_flash_bem or ' +
@@ -199,14 +199,14 @@ class MEEGbuddy:
             meta_data['Boundary Element Model'] = bemf
 
             if srcf is None:
-                if not fs_subjects_dir is None:
+                if fs_subjects_dir:
                     print('Please provide the file for a source space if ' +
                           'you want source estimation, this can be done using MNE ' +
                           'setup_source_space')
             meta_data['Source Space'] = srcf
 
             if transf is None:
-                if not fs_subjects_dir is None:
+                if fs_subjects_dir:
                     print('Please provide the file for a coordinate transformation if ' +
                           'you want source estimation, this can be done using MNE ' +
                           'seting the SUBJECTS_DIR and SUBJECT environmental variables ' +
@@ -319,9 +319,9 @@ class MEEGbuddy:
         from subprocess import call
         from mne.io import Raw
         from mne import read_trans
-        if not op.isdir(dirname):
-            os.makedirs(dirname)
-        readmef = op.join(dirname, 'README')
+        if not op.isdir(bids_dir):
+            os.makedirs(bids_dir)
+        readmef = op.join(bids_dir, 'README')
         if not op.isfile(readmef):
             with open(readmef, 'w') as f:
                 f.write('Welcome to the ____ dataset, published in _____, ' +
@@ -355,11 +355,11 @@ class MEEGbuddy:
             os.makedirs(op.dirname(behf))
         df = read_csv(self.behavior)
         df.to_csv(behf, sep='\t', index=False, na_rep='n/a')
-        behavior_descriptionf = op.join(dirname, 'task-%s_beh.json' % self.task)
+        behavior_descriptionf = op.join(bids_dir, 'task-%s_beh.json' % self.task)
         self._check_and_save_shared_metadata(behavior_descriptionf, self.behavior_description)
         if self.fs_subjects_dir:
             t1f = op.join(self.fs_subjects_dir, self.subject, 'mri', 'T1.mgz')
-            write_anat(dirname, self.subject, t1f, session=None,
+            write_anat(bids_dir, self.subject, t1f, session=None,
                        raw=raw, trans=read_trans(self.transf), overwrite=overwrite)
 
 
