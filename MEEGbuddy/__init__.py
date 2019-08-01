@@ -4,7 +4,8 @@ __version__ = '0.0.dev0'
 
 from .MEEGbuddy import (MEEGbuddy, create_demi_events, loadMEEGbuddy,
 						loadMEEGbuddies, getMEEGbuddiesBySubject,
-						BIDS2MEEGbuddies)
+						BIDS2MEEGbuddies, recon_subject, 
+						setup_source_space)
 from .MBComparator import MBComparator
 from . import pci
 from .psd_multitaper_plot_tools import (DraggableResizeableRectangle,

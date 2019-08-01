@@ -4104,10 +4104,10 @@ def source_fs_and_mne(fs_subjects_dir):
                         'freesurfer to continue')
 
 
-def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite):
+def recon_subject(subject, fs_subjects_dir, t1f, overwrite=False):
     from subprocess import call
+    source_fs_and_mne(fs_subjects_dir)
     os.environ['SUBJECT'] = subject
-    t1f = op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_T1w.nii.gz' % subject)
     if op.isdir(op.join(fs_subjects_dir, subject, 'mri')) and not overwrite:
         print('Recon already run, skipping')
     else:
@@ -4117,76 +4117,84 @@ def recon_subject(subject, bids_dir, out_dir, fs_subjects_dir, overwrite):
              shell=True, env=os.environ)
 
 
-def setup_source_space(subject, bids_dir, out_dir, fs_subjects_dir, overwrite,
-                       ico, ico2, conductivity, spacing, surface):
+def setup_source_space(subject, fs_subjects_dir, flash=None,
+                       ico=4, conductivity=(0.3, 0.006, 0.3), 
+                       spacing='oct6', surface='white', overwrite=False):
     from subprocess import call
     from shutil import copyfile
+    source_fs_and_mne(fs_subjects_dir)
     os.environ['SUBJECT'] = subject
-    call(['mne_setup_source_space --ico %s --cps --overwrite' % ico2], shell=True, env=os.environ)
-    #Organize flash if supplied
-    flash = op.isfile(op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_FLASH.nii.gz' % subject))
-    if flash:
-        if op.isfile(op.join(fs_subjects_dir, subject, 'flash05')):
-            os.remove(op.join(fs_subjects_dir, subject, 'flash05'))
-        call(['ln -s %s flash05' % flash], shell=True, env=os.environ)
-        call(['mne_flash_bem --noflash30'], shell=True, env=os.environ)
-        call(['freeview -v %s/%s/mri/T1.mgz ' % (fs_subjects_dir, subject) + 
-              '-f %s/%s/bem/flash/inner_skull.surf ' % (fs_subjects_dir, subject)+
-              '-f %s/%s/bem/flash/outer_skull.surf ' % (fs_subjects_dir, subject)+
-              '-f %s/%s/bem/flash/outer_skin.surf' % (fs_subjects_dir, subject)],
-              shell=True, env=os.environ)
+    ico2 = spacing.replace('oct', '-').replace('ico', '-')
+    if ((flash and op.isdir(op.join(fs_subjects_dir, subject, 'bem', 'flash'))) or 
+         flash is None and op.isdir(op.join(fs_subjects_dir, subject, 'bem', 'watershed')) and
+         not overwrite):
+        print('Source space already exists, use \'overwrite=True\' to overwrite')
     else:
-        call(['mne_watershed_bem --subject %s --atlas --overwrite' % subject], shell=True, 
-             env=os.environ)
-        call(['freeview -v %s/%s/mri/T1.mgz ' % (fs_subjects_dir, subject) + 
-              '-f %s/%s/bem/watershed/%s_inner_skull_surface ' % (fs_subjects_dir, subject, subject) +
-              '-f %s/%s/bem/watershed/%s_outer_skull_surface ' % (fs_subjects_dir, subject, subject)+ 
-              '-f %s/%s/bem/watershed/%s_outer_skin_surface' % (fs_subjects_dir, subject, subject)],
-              shell=True, env=os.environ)
-    for area in ['inner_skull', 'outer_skull', 'outer_skin']:
-        dst = op.join(fs_subjects_dir, subject, 'bem', '%s.surf' % area)
-        if flash:
-            src = op.join(fs_subjects_dir, subject, 'bem', 'flash',
-                                     '%s_%s_surface' % (subject, area))
+        call(['mne_setup_source_space --ico %s --cps --overwrite' % ico2], shell=True, env=os.environ)
+        #Organize flash if supplied
+        if flash is not None:
+            if op.isfile(op.join(fs_subjects_dir, subject, 'flash05')):
+                os.remove(op.join(fs_subjects_dir, subject, 'flash05'))                
+            call(['ln -s %s flash05' % flash], shell=True, env=os.environ)
+            call(['mne_flash_bem --noflash30'], shell=True, env=os.environ)
+            call(['freeview -v %s/%s/mri/T1.mgz ' % (fs_subjects_dir, subject) + 
+                  '-f %s/%s/bem/flash/inner_skull.surf ' % (fs_subjects_dir, subject)+
+                  '-f %s/%s/bem/flash/outer_skull.surf ' % (fs_subjects_dir, subject)+
+                  '-f %s/%s/bem/flash/outer_skin.surf' % (fs_subjects_dir, subject)],
+                  shell=True, env=os.environ)
         else:
-            src = op.join(fs_subjects_dir, subject, 'bem', 'watershed',
-                                     '%s_%s_surface' % (subject, area))
-        if op.isfile(dst):
-            os.remove(dst)
-        copyfile(src, dst)
-    # BEM
-    call(['mne_setup_forward_model --subject %s --surf ' % subject + 
-          '--ico %i --innershift %i' % (ico, 2 if flash else -1)], shell=True, env=os.environ)
-    if not op.isfile(op.join(fs_subjects_dir, subject, 'bem',
-                     '%s-5120-5120-5120-bem-sol.fif' % subject)):
-        raise ValueError('Forward model failed, likely due to errors in ' + 
-                         'freesurfer reconstruction and segementation. ' + 
-                         'See https://github.com/ezemikulan/blender_freesurfer ' +
-                         'for a workaround, functions from ' + 
-                         'https://github.com/andersonwinkler/toolbox are needed too')
-    # make head model
-    call(['mkheadsurf -subjid %s' % subject], shell=True, env=os.environ)
-    call(['mne_surf2bem --surf %s/surf/lh.seghead ' % op.join(fs_subjects_dir, subject) + 
-          '--id 4 --force --fif %s-head.fif' % op.join(fs_subjects_dir, subject, 'bem', subject)],
-         shell=True, env=os.environ)
-    #
-    call(['mne_setup_mri'], shell=True, env=os.environ)
-    print('Coregistration','In this next interactive GUI, will need to\n' +
-          '1. Load the pial surface file -> Load Surface -> Select Pial Surface\n' +
-          '2. Load the subject\'s digitization data: File -> Load digitizer data ->' +
-          ' Select the raw data file for this session\n' + 
-          '3. Open the coordinate alignment window: Adjust -> Coordinate Alignment\n' + 
-          '4. Open the viewer window: View -> Show viewer\n' +
-          '5. In the coordinate alignment window, click RAP, LAP and Naision, ' + 
-          'and then after clicking each of those click on the corresponing ' +
-          'fiducial points on the reconstructed head model\n' +
-          '6. Click align using fiducials\n' +
-          '7. In the View window: select Options -> Show digitizer data\n'
-          '8. Adjust the x, y and z coordinates and rotation until ' +
-          'the alignment is as close to the ground truth as possible.\n' + 
-          '9. Press \'Save MRI Set\' in the Coordinate Alignment Viewer.\n' +
-          '10.File>Quit N.B. (The close button in the top right corner does not work!).')
-    call(['mne_analyze'], shell=True, env=os.environ)
+            call(['mne_watershed_bem --subject %s --atlas --overwrite' % subject], shell=True, 
+                 env=os.environ)
+            call(['freeview -v %s/%s/mri/T1.mgz ' % (fs_subjects_dir, subject) + 
+                  '-f %s/%s/bem/watershed/%s_inner_skull_surface ' % (fs_subjects_dir, subject, subject) +
+                  '-f %s/%s/bem/watershed/%s_outer_skull_surface ' % (fs_subjects_dir, subject, subject)+ 
+                  '-f %s/%s/bem/watershed/%s_outer_skin_surface' % (fs_subjects_dir, subject, subject)],
+                  shell=True, env=os.environ)
+        for area in ['inner_skull', 'outer_skull', 'outer_skin']:
+            dst = op.join(fs_subjects_dir, subject, 'bem', '%s.surf' % area)
+            if flash:
+                src = op.join(fs_subjects_dir, subject, 'bem', 'flash',
+                                         '%s_%s_surface' % (subject, area))
+            else:
+                src = op.join(fs_subjects_dir, subject, 'bem', 'watershed',
+                                         '%s_%s_surface' % (subject, area))
+            if op.isfile(dst):
+                os.remove(dst)
+            copyfile(src, dst)
+        # BEM
+        call(['mne_setup_forward_model --subject %s --surf ' % subject + 
+              '--ico %i --innershift %i' % (ico, 2 if flash else -1)],
+              shell=True, env=os.environ)
+        if not op.isfile(op.join(fs_subjects_dir, subject, 'bem',
+                         '%s-5120-5120-5120-bem-sol.fif' % subject)):
+            raise ValueError('Forward model failed, likely due to errors in ' + 
+                             'freesurfer reconstruction and segementation. ' + 
+                             'See https://github.com/ezemikulan/blender_freesurfer ' +
+                             'for a workaround, functions from ' + 
+                             'https://github.com/andersonwinkler/toolbox are needed too')
+        # make head model
+        call(['mkheadsurf -subjid %s' % subject], shell=True, env=os.environ)
+        call(['mne_surf2bem --surf %s/surf/lh.seghead ' % op.join(fs_subjects_dir, subject) + 
+              '--id 4 --force --fif %s-head.fif' % op.join(fs_subjects_dir, subject, 'bem', subject)],
+             shell=True, env=os.environ)
+        #
+        call(['mne_setup_mri'], shell=True, env=os.environ)
+        print('Coregistration','In this next interactive GUI, will need to\n' +
+              '1. Load the pial surface file -> Load Surface -> Select Pial Surface\n' +
+              '2. Load the subject\'s digitization data: File -> Load digitizer data ->' +
+              ' Select the raw data file for this session\n' + 
+              '3. Open the coordinate alignment window: Adjust -> Coordinate Alignment\n' + 
+              '4. Open the viewer window: View -> Show viewer\n' +
+              '5. In the coordinate alignment window, click RAP, LAP and Naision, ' + 
+              'and then after clicking each of those click on the corresponing ' +
+              'fiducial points on the reconstructed head model\n' +
+              '6. Click align using fiducials\n' +
+              '7. In the View window: select Options -> Show digitizer data\n'
+              '8. Adjust the x, y and z coordinates and rotation until ' +
+              'the alignment is as close to the ground truth as possible.\n' + 
+              '9. Press \'Save MRI Set\' in the Coordinate Alignment Viewer.\n' +
+              '10.File>Quit N.B. (The close button in the top right corner does not work!).')
+        call(['mne_analyze'], shell=True, env=os.environ)
 
 
 def get_bids_raw_fnames(bids_root):
@@ -4245,16 +4253,21 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, recon=True,
                           for bids_fname in bids_fnames])
     if recon:
         source_fs_and_mne(out_dir)
-        ico2 = spacing.replace('oct', '-').replace('ico', '-')
         print('Running reconstructions on subjects, this will take many hours ' + 
               '~8 per subject depending on your computer configuration')
         for subject in subjects:  # this is done first because it takes so long
-            recon_subject(subject, bids_dir, out_dir, out_dir, overwrite)
+            t1f = op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_T1w.nii.gz' % subject)
+            recon_subject(subject, out_dir, t1f, overwrite)
         print('Setting up the source space. This is automated but will plot for your ' + 
               'quality check so that changes can be made if needed.')
         for subject in subjects:
-            setup_source_space(subject, bids_dir, out_dir, out_dir, overwrite,
-                               ico, ico2, conductivity, spacing, surface)
+            flash = op.join(bids_dir, 'sub-%s' % subject, 'anat', 'sub-%s_FLASH.nii.gz' % subject)
+            if not op.isfile(flash):
+                flash = None
+            setup_source_space(subject, out_dir, flash=flash,
+                               ico=ico, conductivity=conductivity,
+                               spacing=spacing, surface=surface,
+                               overwrite=overwrite)
     for bids_fname in bids_fnames:
         raw = read_raw_bids(op.basename(bids_fname), bids_dir)
         bids_basename = '_'.join(op.basename(bids_fname).split('_')[:-1])
