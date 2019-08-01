@@ -314,7 +314,11 @@ class MEEGbuddy:
 
 
     def save2BIDS(self, bids_dir, overwrite=False):
-        from mne_bids import write_raw_bids, write_anat
+        try:
+            from mne_bids import write_raw_bids, write_anat
+        except:
+            raise ImportError('mne-bids not installed, please install to continue '+
+                              ' (pip install mne-bids)')
         from pandas import read_csv
         from subprocess import call
         from mne.io import Raw
@@ -4241,8 +4245,12 @@ def BIDS2MEEGbuddies(bids_dir, out_dir, recon=True,
                      ico=4, conductivity=(0.3, 0.006, 0.3), 
                      spacing='oct6', surface='white', overwrite=False):
     from subprocess import call
-    from mne_bids import read_raw_bids
-    from mne_bids.utils import _parse_bids_filename, _find_matching_sidecar
+    try:
+        from mne_bids import read_raw_bids
+        from mne_bids.utils import _parse_bids_filename, _find_matching_sidecar
+    except:
+        raise ImportError('mne-bids not installed, please install to continue '+
+                          ' (pip install mne-bids)')
     from mne import pick_types
     from pandas import read_csv
 
