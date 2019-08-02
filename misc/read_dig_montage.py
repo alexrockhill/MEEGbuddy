@@ -183,8 +183,8 @@ def read_dig_montage(hsp=None, hpi=None, elp=None, point_names=None,
         root = ElementTree.parse(bvct).getroot()
         sensors = root.find('CapTrakElectrodeList')
 
-        fids = {}
-        dig_ch_pos = {}
+        fids = dict()
+        dig_ch_pos = dict()
 
         fid_name_map = {'Nasion': 'nasion','RPA': 'rpa','LPA': 'lpa'}
 
@@ -217,11 +217,12 @@ def read_dig_montage(hsp=None, hpi=None, elp=None, point_names=None,
             raise ValueError('hsp, hpi, elp, point_names, fif, egi, bvct must all be '
                              'None if bvct is not None')
         _check_fname(csv, overwrite='read', must_exist=True)
-
+        from pandas import read_csv
         sensors = read_csv(csv)
 
-        fids = {}
-        dig_ch_pos = {}
+        fids = dict()
+        hsp = list()
+        dig_ch_pos = dict()
 
         fid_name_map = {'Nasion': 'nasion','RPA': 'rpa','LPA': 'lpa'}
 
@@ -236,15 +237,17 @@ def read_dig_montage(hsp=None, hpi=None, elp=None, point_names=None,
             coordinates = np.array([float(s['x']),
                                     float(s['y']),
                                     float(s['z'])])
-
+            #
             coordinates *= scale[unit]
-            
+            #
             # Fiducials
             if fid:
                 fid_name = fid_name_map[name]
                 fids[fid_name] = coordinates
-            # EEG Channels
-            else:
+            # Extra points
+            elif 'HSP' in name:
+                hsp.append(coordinates)
+            else:  # EEG Channels
                 dig_ch_pos[name] = coordinates
 
         fids = [fids[key] if key in fids else np.array([0, 0, 0])
