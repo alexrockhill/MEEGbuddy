@@ -4125,7 +4125,7 @@ def setup_source_space(subject, fs_subjects_dir, flash=None,
                        ico=4, conductivity=(0.3, 0.006, 0.3), 
                        spacing='oct6', surface='white', overwrite=False):
     from subprocess import call
-    from shutil import copyfile
+    from shutil import copyfile, copytree
     source_fs_and_mne(fs_subjects_dir)
     os.environ['SUBJECT'] = subject
     ico2 = spacing.replace('oct', '-').replace('ico', '-')
@@ -4137,15 +4137,43 @@ def setup_source_space(subject, fs_subjects_dir, flash=None,
         call(['mne_setup_source_space --ico %s --cps --overwrite' % ico2], shell=True, env=os.environ)
         #Organize flash if supplied
         if flash is not None:
-            if op.isfile(op.join(fs_subjects_dir, subject, 'flash05')):
-                os.remove(op.join(fs_subjects_dir, subject, 'flash05'))                
-            call(['ln -s %s flash05' % flash], shell=True, env=os.environ)
-            call(['mne_flash_bem --noflash30'], shell=True, env=os.environ)
+            this_dir = os.getcwd()
+            flash = op.abspath(flash)
+            flash_out_dir = op.join(fs_subjects_dir, subject, 'flash05')
+            if op.isdir(flash_out_dir):
+                os.remove(flash_out_dir)
+            os.makedirs(flash_out_dir)
+            os.chdir(flash_out_dir)
+            if op.isdir(flash):
+                call(['mne_organize_dicom %s' % flash], shell=True, env=os.environ)
+            else:
+                raise ValueError('Please supply flash directory of dicoms according to ' + 
+                                 'these specifications: ' + 
+                                 'https://martinos.org/mne/stable/manual/appendix/bem_model.html')
+            flash05s = [d for d in os.listdir('.') if 'MEFLASH' in d and '05deg' in d]
+            if len(flash05s) > 1:
+                print('Warning using first flash05 dir found %s' % flash05s[0])
+            elif len(flash05s) == 0:
+                raise ValueError('No flash dir found! Make sure flash05 scan is in flash directory')
+            flash05 = flash05s[0]
+            copytree(flash05, 'flash05')
+            flash30s = [d for d in os.listdir('.') if 'MEFLASH' in d and '30deg' in d]
+            if len(flash30s) == 0:
+                print('No flash30 dir found, using option --noflash30 for mne_flash_bem')
+                no_flash_30 = '--noflash30'
+            else:
+                no_flash_30 = ''
+                if len(flash30s) > 1:
+                    print('Warning using first flash30 dir found %s' % flash30s[0])
+                flash30 = flash30s[0]
+                copytree(flash30, 'flash30')
+            call(['mne_flash_bem %s' % no_flash_30], shell=True, env=os.environ)
             call(['freeview -v %s/%s/mri/T1.mgz ' % (fs_subjects_dir, subject) + 
                   '-f %s/%s/bem/flash/inner_skull.surf ' % (fs_subjects_dir, subject)+
                   '-f %s/%s/bem/flash/outer_skull.surf ' % (fs_subjects_dir, subject)+
                   '-f %s/%s/bem/flash/outer_skin.surf' % (fs_subjects_dir, subject)],
                   shell=True, env=os.environ)
+            os.chdir(this_dir)
         else:
             call(['mne_watershed_bem --subject %s --atlas --overwrite' % subject], shell=True, 
                  env=os.environ)
