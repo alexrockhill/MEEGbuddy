@@ -4104,7 +4104,7 @@ def source_fs_and_mne(fs_subjects_dir):
                             'Make sure $MNE_ROOT is defined correctly. ' +
                             'See martinos.org/mne/stable/install_mne_c.html')
     else:
-        raise Exception('Feesurfer was not sourced. Please source ' +
+        raise Exception('Freesurfer was not sourced. Please source ' +
                         'freesurfer to continue')
 
 
