@@ -2239,9 +2239,9 @@ class MEEGbuddy:
         raw_data = raw.get_data(picks=ch_ind).flatten()
         Fs = raw.info['sfreq']
 
-        n_full_windows = int(np.floor(raw.times[-1]/N))
-        t_end = raw.times[int(n_full_windows*N*Fs)]
-        n_windows = int((n_full_windows-1) * (N/deltaN)) + 1
+        n_full_windows = int(np.floor(raw.times[-1] / N))
+        t_end = raw.times[int(n_full_windows * N * Fs)]
+        n_windows = int((n_full_windows-1) * (N / deltaN)) + 1
 
         if self._has_PSD(keyword) and not overwrite:
             image = self._load_PSD(keyword)
@@ -2262,7 +2262,7 @@ class MEEGbuddy:
                     counters[j] += 1
             for k in range(imsize):
                 image[k] /= counters
-            f = np.linspace(0, Fs/2, imsize)
+            f = np.linspace(0, Fs / 2, imsize)
             f_inds = [i for i, freq in enumerate(f) if
                       (freq >= fmin and freq <= fmax)]
             image = image[f_inds]
@@ -2285,11 +2285,11 @@ class MEEGbuddy:
             fig.set_size_inches(12, 8)
             fig.subplots_adjust(right=0.7)
             buttons = []
-            button_height = 0.8/(len(labels)+1)
-            y0 = 0.1 + button_height/(len(labels)+1)
+            button_height = 0.8 / (len(labels) + 1)
+            y0 = 0.1 + button_height/(len(labels) + 1)
             for label in labels:
                 label_ax = fig.add_axes([0.85, y0, 0.1, button_height])
-                y0 += button_height + button_height/(len(labels)+1)
+                y0 += button_height + button_height / (len(labels) + 1)
                 buttons.append(ButtonClickProcessor(label_ax, label, labels[label],
                                                     ax1, drs, image))
             im = ax1.imshow(image, aspect='auto', cmap='jet', vmin=vmin, vmax=vmax)
@@ -2314,13 +2314,13 @@ class MEEGbuddy:
 
         if assign_states:
             plt.show(fig)
-            state_times = {label:[] for label in labels}
+            state_times = {label: [] for label in labels}
             for label in drs:
                 for dr in drs[label]:
                     rect = dr.rect
-                    start = rect.get_x()*deltaN
-                    duration = rect.get_width()*deltaN
-                    state_times[label].append((start,(start+duration)))
+                    start = rect.get_x() * deltaN
+                    duration = rect.get_width() * deltaN
+                    state_times[label].append((start, (start + duration)))
             return state_times
 
 
