@@ -2246,18 +2246,18 @@ class MEEGbuddy:
         if self._has_PSD(keyword) and not overwrite:
             image = self._load_PSD(keyword)
         else:
-            imsize = int(Fs/2*N) + 1
-            image = np.zeros((imsize, int(n_full_windows*(N/deltaN))))
-            counters = np.zeros((int(n_full_windows*(N/deltaN))))
+            imsize = int(Fs / 2 * N) + 1
+            image = np.zeros((imsize, int(n_full_windows * (N / deltaN))))
+            counters = np.zeros((int(n_full_windows * (N / deltaN))))
             with Parallel(n_jobs=n_jobs) as parallel:
                 results = parallel(delayed(tsa.multi_taper_psd)(
-                            raw_data[int(i*deltaN*Fs):int(i*deltaN*Fs)+int(N*Fs)],
+                            raw_data[int(i * deltaN * Fs): int(i * deltaN * Fs)+int(N * Fs)],
                             Fs=Fs, NW=NW, BW=BW, adaptive=adaptive,
                             jackknife=jackknife, low_bias=low_bias)
                                     for i in tqdm(range(n_windows)))
             fs, psd_mts, nus = zip(*results)
             for i in range(n_windows):
-                for j in range(i, i+int(N/deltaN)):
+                for j in range(i, i+int(N / deltaN)):
                     image[:, j] += np.log10(psd_mts[i])
                     counters[j] += 1
             for k in range(imsize):
