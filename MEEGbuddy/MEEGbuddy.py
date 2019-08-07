@@ -340,18 +340,8 @@ class MEEGbuddy:
         raw = Raw(raw.filenames[0], preload=False)
         session = '01' if self.session is None else self.session
         run = '01' if self.run is None else self.run
-        if self.meg:
-            modality = 'meg'
-        elif self.eeg:
-            modality = 'eeg'
-        elif self.ecog:
-            modality = 'ecog'
-        elif self.seeg:
-            modality = 'seeg'
-        else:
-            raise ValueError('Modality error')
-        bids_basename = ('sub-%s_ses-%s_task-%s_run-%s_%s' 
-                         % (self.subject, session, self.task, run, modality))
+        bids_basename = ('sub-%s_ses-%s_task-%s_run-%s' 
+                         % (self.subject, session, self.task, run))
         write_raw_bids(raw, bids_basename, output_path=bids_dir, overwrite=overwrite)
         behf = op.join(bids_dir, 'sub-%s' % self.subject, 'ses-%s' % session, 
                        'beh', bids_basename + '_beh.tsv')
@@ -363,7 +353,7 @@ class MEEGbuddy:
         self._check_and_save_shared_metadata(behavior_descriptionf, self.behavior_description)
         if self.fs_subjects_dir:
             t1f = op.join(self.fs_subjects_dir, self.subject, 'mri', 'T1.mgz')
-            write_anat(bids_dir, self.subject, t1f, session=None,
+            write_anat(bids_dir, self.subject, t1f, session=session,
                        raw=raw, trans=read_trans(self.transf), overwrite=overwrite)
 
 
