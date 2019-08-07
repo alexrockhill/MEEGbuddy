@@ -5,7 +5,8 @@ import numpy as np
 from mne.io import Raw
 from tqdm import tqdm
 
-def transfer(data_type='MEG', tasks=['MSIT','ECR']):
+def transfer(data_dir='/space/lilli/3/users/DARPA-TRANSFER/meg/',
+             out_dir='./data/', data_type='MEG', tasks=['MSIT', 'ECR']):
 
     rex = re.compile(r'[a-z]{2}\d{3}')
 
@@ -38,12 +39,8 @@ def transfer(data_type='MEG', tasks=['MSIT','ECR']):
                    'EEG069': 'PO4', 'EEG070': 'PO8', 'EEG071': 'O1',
                    'EEG072': 'Oz', 'EEG073': 'O2', 'EEG074': 'Iz'}
 
-    # DARPA database path
-    data_dir = '/space/lilli/3/users/DARPA-TRANSFER/meg/'
-    out_dir = os.getcwd() + '/data/'
-
     for task in tasks:
-        print('transferring task %s' %(task))
+        print('transferring task %s' % task)
 
         info = pd.read_csv('meg_subjects.csv')
         subjects = list(info.loc[info[task], 'Subject'])
@@ -74,7 +71,7 @@ def transfer(data_type='MEG', tasks=['MSIT','ECR']):
                     os.makedirs(out_data_dir)
                 call(['cp %s %s' %(b_in_file, out_data_dir + b_out_file)],
                       env=os.environ,shell=True)
-                out_file = ('%s/sub-%s/%i/%s/%s_%iraw.fif'
+                out_file = ('%s/sub-%s/%i/%s/%s_%i-raw.fif'
                             %(out_dir,subject,task_info.loc[i]['Day'].item(),
                               data_type.lower(),task,task_info.loc[i]['Block'].item()))
                 in_file = ('%s/%s/%03d/%s'

@@ -350,8 +350,8 @@ class MEEGbuddy:
             modality = 'seeg'
         else:
             raise ValueError('Modality error')
-        bids_basename = ('sub-%s_ses-%s_task-%s_run-%s' 
-                         % (self.subject, session, self.task, run))
+        bids_basename = ('sub-%s_ses-%s_task-%s_run-%s_%s' 
+                         % (self.subject, session, self.task, run, modality))
         write_raw_bids(raw, bids_basename, output_path=bids_dir, overwrite=overwrite)
         behf = op.join(bids_dir, 'sub-%s' % self.subject, 'ses-%s' % session, 
                        'beh', bids_basename + '_beh.tsv')
