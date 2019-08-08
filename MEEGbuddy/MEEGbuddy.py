@@ -24,20 +24,21 @@ class MEEGbuddy:
     epochs are made, and autoreject is applied.
     All data is saved automatically in BIDS-inspired format.
     '''
-    def __init__(self, subject=None, session=None, run=None, fdata=None, 
-                 behavior=None, behavior_description=None, baseline=None, 
-                 stimuli=None, eeg=False, meg=False, ecog=False, seeg=False, 
-                 response=None, task=None, no_response=None,
-                 exclude_trials=None, tbuffer=1, subjects_dir=None,
-                 epochs=None, event=None, fs_subjects_dir=None, bemf=None,
-                 srcf=None, transf=None, preload=True, seed=551832, file=None):
+    def __init__(self, subject=None, session=None, run=None, task=None,
+                 fdata=None, behavior=None, behavior_description=None, 
+                 eeg=False, meg=False, ecog=False, seeg=False, 
+                 tbuffer=1, subjects_dir=None, epochs=None, event=None, 
+                 fs_subjects_dir=None, bemf=None, srcf=None, transf=None,
+                 preload=True, seed=551832, file=None):
         '''
         subject : str 
             the name/id of the subject
         session : str
-            the name/id of the session
+            the name/id of the session (optional)
         run : str 
-            the name/id of the run
+            the name/id of the run (optional)
+        task : str
+            the name of the task (optional)
         fdata : str|list of str 
             one or more .fif files with event triggers and EEG data
         behavior : str 
@@ -78,7 +79,13 @@ class MEEGbuddy:
         srcf : str
             the filepath of the source file
         transf : str
-
+            the filepath of the coordinate transform file (from mne_analyze)
+        preload : bool or str
+            Use True to load data into RAM else supply a string to use memory mapping for large files
+        seed : int
+            The number to seed random analyses
+        file : None or str
+            This is used to load MEEGbuddy from a json sidecar file with the descriptors already given
         '''
         from mne import set_log_level
         import warnings
@@ -109,7 +116,7 @@ class MEEGbuddy:
 
             if not any([meg, eeg, ecog, seeg]):
                 raise ValueError('All modalities are False, at least one must be changed to True')
-            
+
             meta_data['MEG'] = meg
             meta_data['EEG'] = eeg
             meta_data['ECOG'] = ecog
