@@ -107,6 +107,9 @@ class MEEGbuddy:
 
             meta_data['Functional Data'] = fdata
 
+            if not any([meg, eeg, ecog, seeg]):
+                raise ValueError('All modalities are False, at least one must be changed to True')
+            
             meta_data['MEG'] = meg
             meta_data['EEG'] = eeg
             meta_data['ECOG'] = ecog
