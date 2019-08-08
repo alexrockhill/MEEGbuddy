@@ -370,7 +370,7 @@ class MEEGbuddy:
             with open(fname, 'w') as f:
                 json.dump(meta_data, f)
 
-    def _check_dict_equal(dict0, dict1):
+    def _check_dict_equal(self, dict0, dict1):
         return (self._check_dict_in_dict(dict0, dict1) and
                 self._check_dict_in_dict(dict1, dict0))
 
