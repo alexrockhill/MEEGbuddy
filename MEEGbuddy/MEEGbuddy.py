@@ -264,7 +264,9 @@ class MEEGbuddy:
             df2 = read_csv(behf)
             if (len(df) != len(df2) or len(df.columns) != len(df2.columns) or
                 any(df.columns != df2.columns) or not
-                all([isnull(df.loc[i, col]) or df.loc[i, col] == df2.loc[i, col]
+                all([(isnull(df.loc[i, col]) or
+                      df.loc[i, col] == df2.loc[i, col] or
+                      abs(df.loc[i, col] - df2.loc[i, col]) < 0.001)
                      for i in df.index for col in df.columns])):
                 print('Warning overwriting previous behavior file')
         df.to_csv(behf, index=False)
