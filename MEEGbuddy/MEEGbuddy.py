@@ -1246,18 +1246,19 @@ class MEEGbuddy:
             self._make_epochs(raw, event, ch, tmin, tmax, detrend, keyword_out,
                               n_events=n_events, response=True)
             if normalized:
-                self._normalize_epochs(event, keyword_out, baseline_arr, n_events,
-                                       response=True)
+                self._normalize_epochs(event, keyword_out, baseline_arr, 
+                                       n_events, bl_events=bl_epochs.events[:, 2])
 
 
-    def _normalize_epochs(self, event, keyword, baseline_arr, n_events, response=False):
+    def _normalize_epochs(self, event, keyword, baseline_arr, n_events,
+                          bl_events=None):
         from mne import EpochsArray
         print('Normalizing epochs based on baseline')
         epochs = self._load_epochs(event, keyword=keyword)
         epochs_data = epochs.get_data()
-        if response:
-            response_events = np.setdiff1d(np.arange(n_events), self.no_response[event])
-            include = np.setdiff1d(response_events, self.exclude_trials)
+        if bl_events is not None:
+            include = [i for i, e in enumerate(bl_events) if 
+                       e not in self.no_response[event]]
             baseline_arr = baseline_arr[include]
         epochs_demeaned_data = np.array([arr - baseline_arr.T
                                          for arr in epochs_data.T]).T
